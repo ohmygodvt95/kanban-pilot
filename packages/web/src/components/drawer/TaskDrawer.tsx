@@ -1,9 +1,12 @@
 import type { Project, TaskDetail } from '@agent-kanban/shared';
-import { Activity, FileDiff, FlaskConical, LayoutList, MessageSquareText, X } from 'lucide-react';
+import { Activity, FileDiff, FlaskConical, HelpCircle, LayoutList, MessageSquareText, X } from 'lucide-react';
 import { lazy, type ReactNode, Suspense, useEffect, useState } from 'react';
 import { useTask } from '../../api/queries';
 import { formatCost } from '../../lib/format';
+import { useI18n } from '../../lib/i18n';
 import { EXECUTOR_ICONS, EXECUTOR_LABELS, isBusy } from '../../lib/state';
+import { markTourSeen, tourSeen, tourSteps } from '../../lib/tour';
+import { TOUR_LABELS, Tour } from '../Tour';
 import { Badge, ColumnPill, IconButton } from '../ui';
 import { ActivityTab } from './ActivityTab';
 import { ChatTab } from './ChatTab';
@@ -25,13 +28,24 @@ export function TaskDrawer({
 }) {
   const task = useTask(taskId);
   const [tab, setTab] = useState<Tab>('overview');
+  const { lang, t: tr } = useI18n();
+  // first task ever opened: short tour of the drawer (replayable from the header)
+  const [tour, setTour] = useState(false);
+  useEffect(() => {
+    if (task.data && !tourSeen('task')) setTour(true);
+  }, [task.data]);
+  const closeTour = () => {
+    markTourSeen('task');
+    setTour(false);
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (tour) return; // the tour owns Escape while it is open
       if (e.key === 'Escape' && !(e.target instanceof HTMLTextAreaElement)) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, tour]);
 
   const t = task.data;
   const tabs: { id: Tab; label: string; icon: ReactNode; count?: number | string }[] = [
@@ -74,12 +88,22 @@ export function TaskDrawer({
           <div className="p-6 text-sm text-zinc-500">Loading…</div>
         ) : (
           <>
-            <Header task={t} project={project} onClose={onClose} />
+            <Header
+              task={t}
+              project={project}
+              onClose={onClose}
+              onTour={() => setTour(true)}
+              tourLabel={tr('task.tour')}
+            />
+            {tour ? (
+              <Tour steps={tourSteps('task', lang)} labels={TOUR_LABELS[lang]} onClose={closeTour} />
+            ) : null}
             <nav className="flex gap-1 border-zinc-200 border-b px-3 dark:border-zinc-800">
               {tabs.map((x) => (
                 <button
                   key={x.id}
                   type="button"
+                  data-tour={`tab-${x.id}`}
                   onClick={() => setTab(x.id)}
                   className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition ${
                     tab === x.id
@@ -123,11 +147,23 @@ export function TaskDrawer({
   );
 }
 
-function Header({ task, project, onClose }: { task: TaskDetail; project: Project; onClose: () => void }) {
+function Header({
+  task,
+  project,
+  onClose,
+  onTour,
+  tourLabel,
+}: {
+  task: TaskDetail;
+  project: Project;
+  onClose: () => void;
+  onTour: () => void;
+  tourLabel: string;
+}) {
   const executor = task.executor ?? project.default_executor;
   const busy = isBusy(task);
   return (
-    <div className="border-zinc-200 border-b px-5 pt-4 pb-3 dark:border-zinc-800">
+    <div className="border-zinc-200 border-b px-5 pt-4 pb-3 dark:border-zinc-800" data-tour="task-header">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -141,9 +177,14 @@ function Header({ task, project, onClose }: { task: TaskDetail; project: Project
           </div>
           <h2 className="truncate font-semibold text-lg leading-tight tracking-tight">{task.title}</h2>
         </div>
-        <IconButton label="Close (Esc)" onClick={onClose}>
-          <X size={18} />
-        </IconButton>
+        <div className="flex shrink-0 items-center">
+          <IconButton label={tourLabel} onClick={onTour}>
+            <HelpCircle size={16} />
+          </IconButton>
+          <IconButton label="Close (Esc)" onClick={onClose}>
+            <X size={18} />
+          </IconButton>
+        </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-500">
         <span title="executor">

@@ -1,6 +1,7 @@
 import type { Column, Substate } from '@agent-kanban/shared';
 import { Loader2, X } from 'lucide-react';
 import { type ButtonHTMLAttributes, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusTrap } from '../../lib/focus-trap';
 import { COLUMN_LABELS, COLUMN_PILL, SUBSTATE_LABELS, SUBSTATE_STYLE } from '../../lib/state';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'subtle';
@@ -157,6 +158,8 @@ export function Modal({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+  const box = useRef<HTMLDivElement>(null);
+  useFocusTrap(box);
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-900/40 p-4 backdrop-blur-[2px]"
@@ -164,6 +167,7 @@ export function Modal({
       role="presentation"
     >
       <div
+        ref={box}
         className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900`}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"

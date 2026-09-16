@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AttemptService } from './attempts/attempts.js';
+import { BackupService } from './backup.js';
 import type { CoreContext } from './context.js';
 import { type DatabaseHandle, openDatabase } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
@@ -14,6 +15,7 @@ import { createDefaultRegistry, type ExecutorRegistry } from './executors/regist
 import { listWorktrees, pruneWorktrees } from './git/git.js';
 import { IntegrationService } from './integrations.js';
 import { IssueService } from './issues.js';
+import { MaintenanceService } from './maintenance.js';
 import { PostRunPipeline } from './postrun/postrun.js';
 import { ProjectService } from './projects.js';
 import { createDefaultProviders, type ProviderRegistry } from './providers/index.js';
@@ -39,6 +41,8 @@ export interface CoreOptions {
   retentionDays?: number;
   /** Ticker checking which integrations are due for a poll (0 = never). Default 10 s. */
   issueImportIntervalMs?: number;
+  /** How long a bulk clear can be undone before the rows are purged. Default 10 min. */
+  undoWindowMs?: number;
 }
 
 export interface Core {
@@ -54,6 +58,8 @@ export interface Core {
   runner: JobRunner;
   issues: IssueService;
   integrations: IntegrationService;
+  maintenance: MaintenanceService;
+  backup: BackupService;
   /** Recover state, prune old events and start the job runner. */
   start(): Promise<void>;
   /**
@@ -107,6 +113,8 @@ export function createCore(options: CoreOptions = {}): Core {
   let postRun: PostRunPipeline;
   let issues: IssueService;
   const integrations = new IntegrationService(ctx);
+  const maintenance = new MaintenanceService(ctx);
+  const backup = new BackupService(ctx);
   tasks = new TaskService(ctx, {
     attempts,
     runs,
@@ -194,11 +202,17 @@ export function createCore(options: CoreOptions = {}): Core {
   let importTimer: NodeJS.Timeout | null = null;
   // Integrations carry their own poll interval (default 30 s); this ticker only checks what is due.
   const importTickMs = options.issueImportIntervalMs ?? 10_000;
+  const undoWindowMs = options.undoWindowMs ?? 10 * 60_000;
   const prune = async () => {
     if (retentionDays <= 0) return 0;
     const n = await store.pruneRunEvents(retentionDays);
     if (n) logger.info({ deleted: n, retentionDays }, 'pruned old run events');
     return n;
+  };
+  /** Soft-deleted tasks past the undo window are removed for good. */
+  const purgeDeleted = async () => {
+    const n = await store.purgeDeletedTasks(undoWindowMs);
+    if (n) logger.info({ purged: n }, 'purged cleared tasks');
   };
 
   return {
@@ -214,6 +228,8 @@ export function createCore(options: CoreOptions = {}): Core {
     runner,
     issues,
     integrations,
+    maintenance,
+    backup,
     prune,
     async start() {
       const recovered = await runner.recover();
@@ -226,7 +242,10 @@ export function createCore(options: CoreOptions = {}): Core {
       // Pull new issues from configured trackers now and whenever an integration's interval elapses.
       if (importTickMs > 0) {
         void issues.pollAll().catch((err) => logger.warn({ err: errorMessage(err) }, 'issue import failed'));
-        importTimer = setInterval(() => void issues.pollDue().catch(() => {}), importTickMs);
+        importTimer = setInterval(() => {
+          void issues.pollDue().catch(() => {});
+          void purgeDeleted().catch(() => {});
+        }, importTickMs);
         importTimer.unref();
       }
       runner.start();

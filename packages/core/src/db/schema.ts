@@ -35,6 +35,8 @@ export const projects = sqliteTable('projects', {
   refinement_prompt: text('refinement_prompt'),
   model: text('model'),
   max_budget_usd: real('max_budget_usd'),
+  daily_budget_usd: real('daily_budget_usd'),
+  weekly_budget_usd: real('weekly_budget_usd'),
   prompt_language: text('prompt_language').$type<PromptLanguage>().notNull().default('vi'),
   execute_prompt: text('execute_prompt'),
   followup_prompt: text('followup_prompt'),
@@ -71,6 +73,10 @@ export const tasks = sqliteTable(
     source_provider: text('source_provider').$type<ProviderId>(),
     source_external_id: text('source_external_id'),
     source_url: text('source_url'),
+    /** Remote `updated` seen when title/body were last synced (two-way sync watermark). */
+    source_updated_at: text('source_updated_at'),
+    /** Soft delete: set by "clear all tasks"; rows are hidden, restorable for a while, then purged. */
+    deleted_at: text('deleted_at'),
     created_at: text('created_at').notNull(),
     updated_at: text('updated_at').notNull(),
   },
@@ -164,9 +170,18 @@ export const comments = sqliteTable(
     file_path: text('file_path'),
     line: integer('line'),
     consumed_by_run_id: text('consumed_by_run_id').references(() => runs.id, { onDelete: 'set null' }),
+    /** Comment id on the tracker for imported comments (dedupe), null for local ones. */
+    external_id: text('external_id'),
+    /** Author display name for imported comments. */
+    author: text('author'),
     created_at: text('created_at').notNull(),
   },
-  (t) => [index('comments_task_idx').on(t.task_id)],
+  (t) => [
+    index('comments_task_idx').on(t.task_id),
+    uniqueIndex('comments_task_external_unique')
+      .on(t.task_id, t.external_id)
+      .where(sql`external_id IS NOT NULL`),
+  ],
 );
 
 /** Tracker connection of a project (one per project). Secrets are stored locally in `auth`. */

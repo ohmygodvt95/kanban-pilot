@@ -3,7 +3,8 @@
  * and shows a card next to it. Keyboard: → / Enter next, ← back, Esc close.
  */
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useFocusTrap } from '../lib/focus-trap';
 import type { TourStep } from '../lib/tour';
 import { Button } from './ui';
 
@@ -39,6 +40,8 @@ export function Tour({
 }) {
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
+  const card = useRef<HTMLDivElement>(null);
+  useFocusTrap(card);
   const step = steps[index] ?? steps[0] ?? { title: '', body: '' };
   const last = index === steps.length - 1;
 
@@ -113,6 +116,7 @@ export function Tour({
         <div className="absolute inset-0 bg-zinc-900/55" />
       )}
       <div
+        ref={card}
         className="absolute rounded-xl border border-zinc-200 bg-white p-4 text-zinc-800 shadow-2xl dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
         style={cardStyle}
       >

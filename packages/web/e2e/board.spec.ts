@@ -44,6 +44,11 @@ test.describe
       // drawer opens on the new task; refine → questions
       const drawer = page.getByLabel('Task details');
       await expect(drawer.getByRole('heading', { name: 'Add subtract function' })).toBeVisible();
+      // first task ever opened: a short drawer tour, skipped here
+      const taskTour = page.getByRole('dialog', { name: 'The task at a glance' });
+      await expect(taskTour).toBeVisible();
+      await taskTour.getByRole('button', { name: 'Skip' }).click();
+      await expect(taskTour).toBeHidden();
       await drawer.getByRole('button', { name: 'Refine → To do' }).click();
       await expect(drawer.getByText('The agent needs a few answers')).toBeVisible();
       const answers = drawer.locator('section textarea');
@@ -106,7 +111,10 @@ test.describe
         })
       ).json()) as { id: string };
       // fresh browser context: mark the tour as seen so it does not cover the board
-      await page.addInitScript(() => localStorage.setItem('agent-kanban.tour.board', '1'));
+      await page.addInitScript(() => {
+        localStorage.setItem('agent-kanban.tour.board', '1');
+        localStorage.setItem('agent-kanban.tour.task', '1');
+      });
       await page.goto(`/p/${projectId}`);
       const card = page.getByText('Drag me').first();
       const review = page.getByRole('heading', { name: 'Review' });

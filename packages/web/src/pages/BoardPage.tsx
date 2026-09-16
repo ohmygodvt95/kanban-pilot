@@ -1,62 +1,35 @@
 import type { Column, ExecutorId, ExternalIssue, Task, TaskKind, TaskPriority } from '@agent-kanban/shared';
 import { EXECUTOR_IDS, TASK_KINDS, TASK_PRIORITIES } from '@agent-kanban/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, HelpCircle, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import {
+  Download,
+  HelpCircle,
+  Plus,
+  Search,
+  Settings,
+  SlidersHorizontal,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { keys, upsertTask, useProject, useProvider, useTasks } from '../api/queries';
+import { keys, upsertTask, useProject, useProjects, useProvider, useTasks } from '../api/queries';
 import { useProjectEvents } from '../api/sse';
+import { BulkPushModal } from '../components/BulkPushModal';
 import { Board } from '../components/board/Board';
+import { CommandPalette, type PaletteAction } from '../components/CommandPalette';
 import { TaskDrawer } from '../components/drawer/TaskDrawer';
 import { Shell } from '../components/Shell';
 import { TOUR_LABELS, Tour } from '../components/Tour';
 import { Button, DangerConfirm, Field, IconButton, inputClass, Modal, Switch } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
+import { isFiltering, matchesFilter, QUICK_IDS, type Quick } from '../lib/filter';
+import { useI18n } from '../lib/i18n';
 import { EXECUTOR_LABELS } from '../lib/state';
 import { KIND_LABELS, PRIORITY_LABELS } from '../lib/taskmeta';
-import { markTourSeen, tourLanguage, tourSeen, tourSteps } from '../lib/tour';
-
-/** Quick filters shown next to the search box. */
-type Quick = 'all' | 'attention' | 'running' | 'bugs' | 'urgent';
-const QUICK: { id: Quick; label: string; title: string }[] = [
-  { id: 'all', label: 'All', title: 'Show every task' },
-  { id: 'attention', label: 'Needs me', title: 'Errors, open questions, ready to review' },
-  { id: 'running', label: 'Running', title: 'Agent currently working' },
-  { id: 'bugs', label: 'Bugs', title: 'Tasks classified as bugs' },
-  { id: 'urgent', label: 'Urgent', title: 'High and urgent priority' },
-];
-
-function matches(
-  task: Task,
-  query: string,
-  executor: ExecutorId | '',
-  quick: Quick,
-  defaultExecutor: string,
-): boolean {
-  if (query) {
-    const q = query.toLowerCase();
-    if (
-      !task.title.toLowerCase().includes(q) &&
-      !task.description.toLowerCase().includes(q) &&
-      !task.id.toLowerCase().includes(q)
-    )
-      return false;
-  }
-  if (executor && (task.executor ?? defaultExecutor) !== executor) return false;
-  if (quick === 'attention') {
-    return (
-      (task.column === 'doing' && task.substate === 'error') ||
-      task.substate === 'needs_answer' ||
-      task.column === 'review'
-    );
-  }
-  if (quick === 'running')
-    return task.column === 'doing' && (task.substate === 'running' || task.substate === 'queued');
-  if (quick === 'bugs') return task.kind === 'bug';
-  if (quick === 'urgent') return task.priority === 'urgent' || task.priority === 'high';
-  return true;
-}
+import { markTourSeen, tourSeen, tourSteps } from '../lib/tour';
 
 export function BoardPage() {
   const { projectId = '' } = useParams();
@@ -64,21 +37,45 @@ export function BoardPage() {
   const project = useProject(projectId);
   const tasks = useTasks(projectId);
   const provider = useProvider(projectId);
-  const sse = useProjectEvents(projectId);
+  const projects = useProjects();
+  const navigate = useNavigate();
+  const { t, lang } = useI18n();
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const [palette, setPalette] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
+  const openFromToast = useCallback(
+    (id: string) => {
+      const next = new URLSearchParams(window.location.search);
+      next.set('task', id);
+      setParams(next, { replace: true });
+    },
+    [setParams],
+  );
+  const sse = useProjectEvents(projectId, openFromToast);
+  const restore = useMutation({
+    mutationFn: (ids: string[]) => api.projects.restoreTasks(projectId, ids),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: keys.tasks(projectId) });
+      toast.push({ kind: 'success', text: t('clear.restored', { n: r.length }) });
+    },
+    onError: (err) => toast.error(err),
+  });
   const clearAll = useMutation({
     mutationFn: (force: boolean) => api.projects.deleteAllTasks(projectId, force),
     onSuccess: (r) => {
       setClearing(false);
       open(null);
       void qc.invalidateQueries({ queryKey: keys.tasks(projectId) });
+      // soft delete on the server: offer an undo while the rows are still around
       toast.push({
         kind: r.skipped ? 'info' : 'success',
-        text: `Deleted ${r.deleted} task${r.deleted === 1 ? '' : 's'}${r.skipped ? `, ${r.skipped} skipped (agent running)` : ''}`,
+        text: `${t('clear.done', { n: r.deleted })}${r.skipped ? ` (${r.skipped} skipped: agent running)` : ''}`,
+        duration: 15_000,
+        action: r.ids.length ? { label: t('clear.undo'), onClick: () => restore.mutate(r.ids) } : undefined,
       });
     },
     onError: (err) => toast.error(err, 'Delete failed'),
@@ -122,7 +119,10 @@ export function BoardPage() {
           target.tagName === 'TEXTAREA' ||
           target.tagName === 'SELECT' ||
           target.isContentEditable);
-      if (e.key === '/' && !typing) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPalette((v) => !v);
+      } else if (e.key === '/' && !typing) {
         e.preventDefault();
         searchRef.current?.focus();
       } else if (e.key === 'n' && !typing && !selected && !creating) {
@@ -138,11 +138,12 @@ export function BoardPage() {
   }, [selected, creating]);
 
   const defaultExecutor = project.data?.default_executor ?? 'claude';
+  const filter = useMemo(() => ({ query, executor, quick }), [query, executor, quick]);
   const filtered = useMemo(
-    () => tasks.data?.filter((t) => matches(t, query.trim(), executor, quick, defaultExecutor)) ?? [],
-    [tasks.data, query, executor, quick, defaultExecutor],
+    () => tasks.data?.filter((x) => matchesFilter(x, filter, defaultExecutor)) ?? [],
+    [tasks.data, filter, defaultExecutor],
   );
-  const filtering = !!query.trim() || !!executor || quick !== 'all';
+  const filtering = isFiltering(filter);
 
   const stats = tasks.data
     ? {
@@ -162,6 +163,48 @@ export function BoardPage() {
     markTourSeen('board');
     setTour(false);
   };
+  const paletteActions: PaletteAction[] = [
+    {
+      id: 'new',
+      label: t('board.newTask'),
+      icon: <Plus size={14} />,
+      hint: 'n',
+      run: () => setCreating(true),
+    },
+    ...(provider.data?.ok
+      ? [
+          {
+            id: 'import',
+            label: t('board.import'),
+            icon: <Download size={14} />,
+            run: () => setImporting(true),
+          },
+          {
+            id: 'push',
+            label: t('board.pushUnlinked', { tracker: provider.data.id }),
+            icon: <Upload size={14} />,
+            run: () => setPushing(true),
+          },
+        ]
+      : []),
+    {
+      id: 'filters',
+      label: t('board.filters'),
+      icon: <SlidersHorizontal size={14} />,
+      run: () => setShowFilters((v) => !v),
+    },
+    {
+      id: 'settings',
+      label: t('menu.settings'),
+      icon: <Settings size={14} />,
+      run: () => navigate(`/p/${projectId}/settings`),
+    },
+    { id: 'integration', label: t('menu.integration'), run: () => navigate(`/p/${projectId}/integration`) },
+    { id: 'tour', label: t('board.tour'), icon: <HelpCircle size={14} />, run: () => setTour(true) },
+    ...(tasks.data?.length
+      ? [{ id: 'clear', label: t('board.clear'), icon: <Trash2 size={14} />, run: () => setClearing(true) }]
+      : []),
+  ];
   const searchBox = (
     <>
       <Search size={13} className="pointer-events-none absolute top-2.5 left-2 text-zinc-400" />
@@ -169,7 +212,7 @@ export function BoardPage() {
         ref={searchRef}
         aria-label="Search tasks"
         className={`${inputClass} h-8 py-1 pr-7 pl-7 text-xs shadow-none`}
-        placeholder="Search tasks  ( / )"
+        placeholder={t('board.search')}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
@@ -187,15 +230,15 @@ export function BoardPage() {
   );
   const filterControls = (
     <>
-      {QUICK.map((q) => (
+      {QUICK_IDS.map((q) => (
         <button
-          key={q.id}
+          key={q}
           type="button"
-          title={q.title}
-          onClick={() => setQuick(q.id)}
-          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] transition ${quick === q.id ? 'bg-accent-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'}`}
+          title={t(`quick.${q}.title`)}
+          onClick={() => setQuick(q)}
+          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] transition ${quick === q ? 'bg-accent-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'}`}
         >
-          {q.label}
+          {t(`quick.${q}`)}
         </button>
       ))}
       <select
@@ -204,7 +247,7 @@ export function BoardPage() {
         value={executor}
         onChange={(e) => setExecutor(e.target.value as ExecutorId | '')}
       >
-        <option value="">any executor</option>
+        <option value="">{t('board.anyExecutor')}</option>
         {EXECUTOR_IDS.map((id) => (
           <option key={id} value={id}>
             {EXECUTOR_LABELS[id] ?? id}
@@ -225,7 +268,7 @@ export function BoardPage() {
           </div>
           {/* filters live in a second row, revealed by this toggle (or automatically while active) */}
           <IconButton
-            label={showFilters ? 'Hide filters' : 'Filters'}
+            label={showFilters ? t('board.hideFilters') : t('board.filters')}
             className={`relative ${showFilters ? 'bg-zinc-200/70 dark:bg-zinc-700' : ''}`}
             onClick={() => setShowFilters((v) => !v)}
             data-tour="filters"
@@ -248,43 +291,55 @@ export function BoardPage() {
       info={
         stats ? (
           <span className="flex gap-3">
-            <span>{stats.running} running</span>
-            <span>{stats.review} in review</span>
-            <span>${stats.cost.toFixed(2)} spent</span>
+            <span>{t('board.running', { n: stats.running })}</span>
+            <span>{t('board.review', { n: stats.review })}</span>
+            <span>{t('board.spent', { n: stats.cost.toFixed(2) })}</span>
           </span>
         ) : null
       }
+      onPalette={() => setPalette(true)}
       actions={[
         ...(provider.data?.ok
           ? [
               {
-                label: 'Import issues',
+                label: t('board.import'),
                 icon: <Download />,
-                title: `Import issues from ${provider.data.projectRef}`,
+                title: t('board.importTitle', { ref: provider.data.projectRef ?? '' }),
                 onClick: () => setImporting(true),
+              },
+              {
+                label: t('board.pushUnlinked', { tracker: provider.data.id }),
+                icon: <Upload />,
+                onClick: () => setPushing(true),
               },
             ]
           : []),
         ...(tasks.data?.length
           ? [
               {
-                label: 'Clear all tasks',
+                label: t('board.clear'),
                 icon: <Trash2 />,
-                title: 'Delete every task of this project',
+                title: t('board.clearTitle'),
                 onClick: () => setClearing(true),
               },
             ]
           : []),
         {
-          label: 'New task',
+          label: t('board.tour'),
+          icon: <HelpCircle />,
+          title: t('board.tourTitle'),
+          onClick: () => setTour(true),
+        },
+        {
+          label: t('board.newTask'),
           icon: <Plus size={14} />,
-          title: 'New task (n)',
+          title: t('board.newTaskTitle'),
           primary: true,
           onClick: () => setCreating(true),
         },
       ]}
     >
-      {project.isError ? <div className="p-6 text-sm text-red-600">Project not found.</div> : null}
+      {project.isError ? <div className="p-6 text-sm text-red-600">{t('board.noProject')}</div> : null}
       {project.data && tasks.data ? (
         <Board
           project={project.data}
@@ -300,10 +355,35 @@ export function BoardPage() {
       ) : (
         <div className="p-6 text-sm text-zinc-500">Loading…</div>
       )}
+      {project.data && tasks.data && tasks.data.length === 0 && !filtering ? (
+        <EmptyBoard
+          tracker={provider.data?.ok ? provider.data.id : null}
+          onCreate={() => setCreating(true)}
+          onImport={() => setImporting(true)}
+          onTour={() => setTour(true)}
+        />
+      ) : null}
+      {palette && tasks.data ? (
+        <CommandPalette
+          tasks={tasks.data}
+          projects={projects.data ?? []}
+          actions={paletteActions}
+          onOpenTask={(id) => open(id)}
+          onClose={() => setPalette(false)}
+        />
+      ) : null}
+      {pushing && tasks.data && provider.data?.ok ? (
+        <BulkPushModal
+          projectId={projectId}
+          tracker={provider.data.id}
+          tasks={tasks.data}
+          onClose={() => setPushing(false)}
+        />
+      ) : null}
       {clearing && tasks.data ? (
         <DangerConfirm
-          title={`Delete all ${tasks.data.length} tasks?`}
-          body="Every task of this project is removed, whatever its origin (manual or imported), together with runs, comments and active worktrees. Linked issues on the tracker are not touched; imported ones come back on the next poll unless you remove the integration."
+          title={t('clear.title', { n: tasks.data.length })}
+          body={t('clear.body', { minutes: 10 })}
           running={
             tasks.data.filter(
               (t) => t.column === 'doing' && (t.substate === 'running' || t.substate === 'queued'),
@@ -330,7 +410,7 @@ export function BoardPage() {
         />
       ) : null}
       {tour && tasks.data ? (
-        <Tour steps={tourSteps('board')} labels={TOUR_LABELS[tourLanguage()]} onClose={closeTour} />
+        <Tour steps={tourSteps('board', lang)} labels={TOUR_LABELS[lang]} onClose={closeTour} />
       ) : null}
       {selected && project.data ? (
         <TaskDrawer taskId={selected} project={project.data} onClose={() => open(null)} />
@@ -595,5 +675,44 @@ function ImportIssuesModal({
         ) : null}
       </ul>
     </Modal>
+  );
+}
+
+/** Centered call-to-action when a project has no tasks at all. */
+function EmptyBoard({
+  tracker,
+  onCreate,
+  onImport,
+  onTour,
+}: {
+  tracker: string | null;
+  onCreate: () => void;
+  onImport: () => void;
+  onTour: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-24 z-10 flex justify-center px-4">
+      <div className="pointer-events-auto w-full max-w-md rounded-2xl border border-zinc-200 bg-white/95 p-6 text-center shadow-xl backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95">
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-accent-100 text-accent-700 dark:bg-accent-900/40 dark:text-accent-200">
+          <Plus size={18} />
+        </div>
+        <h2 className="font-semibold text-base">{t('empty.title')}</h2>
+        <p className="mt-1 text-sm text-zinc-500">{t('empty.body')}</p>
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <Button variant="primary" icon={<Plus size={14} />} onClick={onCreate}>
+            {t('empty.create')}
+          </Button>
+          {tracker ? (
+            <Button icon={<Download size={14} />} onClick={onImport}>
+              {t('empty.import', { tracker })}
+            </Button>
+          ) : null}
+          <Button variant="ghost" icon={<HelpCircle size={14} />} onClick={onTour}>
+            {t('empty.tour')}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -5,10 +5,12 @@ import {
   type DragEndEvent,
   DragOverlay,
   type DragStartEvent,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { ApiError, api } from '../../api/client';
@@ -47,7 +49,11 @@ export function Board({
   const [confirm, confirmNode] = useConfirm();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pending, setPending] = useState<{ id: string; column: Column; position: number } | null>(null);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // Pointer for mouse/touch; keyboard: focus a card, Space to lift, arrows to move, Space to drop.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   const byColumn = useMemo(() => {
     const map: Record<Column, Task[]> = { backlog: [], todo: [], doing: [], review: [], done: [] };

@@ -11,6 +11,7 @@ import type {
   CreateMeta,
   ProviderId,
   ProviderModuleInfo,
+  RemoteUser,
   StatusMap,
   TaskKind,
   TaskPriority,
@@ -28,7 +29,23 @@ export interface ExternalIssue {
   /** Guessed from labels/issue type/priority; null when unknown. */
   kind?: TaskKind | null;
   priority?: TaskPriority | null;
+  /** Last modification on the tracker (ISO); drives two-way sync. */
+  updatedAt?: string | null;
 }
+
+export type { RemoteUser };
+
+/** A comment on a tracker issue. */
+export interface ExternalComment {
+  externalId: string;
+  author: string;
+  /** Markdown-ish body (providers convert their own markup). */
+  body: string;
+  createdAt: string;
+}
+
+/** Prefix of every comment agent-kanban posts itself; such comments are never imported back. */
+export const OWN_COMMENT_PREFIX = '🤖 agent-kanban:';
 
 export interface PullRequestInput {
   head: string;
@@ -91,6 +108,12 @@ export interface IssueProvider {
   createMeta(): Promise<CreateMeta>;
   /** Create an issue from a local task and return it (with externalId/url). */
   createIssue(input: CreateIssueInput): Promise<ExternalIssue>;
+  /** Push edited title/body to the issue; returns the refreshed issue. */
+  updateIssue(externalId: string, patch: { title?: string; body?: string }): Promise<ExternalIssue>;
+  /** Human comments on the issue (oldest first); system notes and our own comments excluded. */
+  listComments(externalId: string): Promise<ExternalComment[]>;
+  /** Users matching `query`, for user-picker fields (assignee, custom user fields). */
+  searchUsers(query: string): Promise<RemoteUser[]>;
 }
 
 export interface ProviderModule {

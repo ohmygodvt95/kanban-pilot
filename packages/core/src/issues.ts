@@ -7,6 +7,7 @@ import type { Column, Task } from '@agent-kanban/shared';
 import type { CoreContext } from './context.js';
 import type { IntegrationService } from './integrations.js';
 import { columnForStatus, type SyncContext, statusComment, statusForColumn } from './providers/index.js';
+import type { ExternalIssue } from './providers/types.js';
 import { errorMessage } from './util/errors.js';
 
 export interface IssueSyncDeps {
@@ -55,6 +56,68 @@ export class IssueService {
     }
   }
 
+  /**
+   * Push edited title/description to the linked issue and remember the remote
+   * watermark so the next poll does not pull the same text back. Best effort.
+   */
+  async pushText(task: Task, patch: { title?: string; description?: string }): Promise<void> {
+    if (!task.source_external_id || !task.source_provider) return;
+    const link = await this.deps.integrations().provider(task.project_id);
+    if (!link || link.row.provider !== task.source_provider) return;
+    try {
+      const issue = await link.provider.updateIssue(task.source_external_id, {
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.description !== undefined ? { body: patch.description } : {}),
+      });
+      await this.ctx.store.updateTask(task.id, {
+        source_updated_at: issue.updatedAt ?? null,
+        last_error: null,
+      });
+    } catch (err) {
+      this.ctx.logger.warn({ task: task.id, err: errorMessage(err) }, 'issue text sync failed');
+      await this.ctx.store
+        .updateTask(task.id, { last_error: `issue sync failed: ${errorMessage(err)}` })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Pull remote changes into linked tasks: title/body when the issue changed on
+   * the tracker since our watermark, and new human comments (deduplicated by
+   * their remote id). Done tasks are left alone. Returns the number of tasks touched.
+   */
+  async pullUpdates(projectId: string, issues: ExternalIssue[]): Promise<number> {
+    const link = await this.deps.integrations().provider(projectId);
+    if (!link) return 0;
+    const byId = new Map(issues.map((i) => [i.externalId, i]));
+    let touched = 0;
+    for (const task of await this.ctx.store.listTasks(projectId)) {
+      if (!task.source_external_id || task.source_provider !== link.row.provider || task.column === 'done')
+        continue;
+      const issue = byId.get(task.source_external_id);
+      if (!issue?.updatedAt || issue.updatedAt === task.source_updated_at) continue;
+      try {
+        const patch: Record<string, unknown> = { source_updated_at: issue.updatedAt };
+        if (issue.title !== task.title) patch.title = issue.title;
+        if (issue.body !== task.description) patch.description = issue.body;
+        await this.ctx.store.updateTask(task.id, patch);
+        for (const c of await link.provider.listComments(task.source_external_id)) {
+          await this.ctx.store.insertTrackerComment({
+            task_id: task.id,
+            external_id: c.externalId,
+            author: c.author,
+            body: c.body,
+            created_at: c.createdAt,
+          });
+        }
+        touched++;
+      } catch (err) {
+        this.ctx.logger.warn({ task: task.id, err: errorMessage(err) }, 'issue pull failed');
+      }
+    }
+    return touched;
+  }
+
   /** Push the task's current column to its (freshly linked) issue. */
   async syncNow(task: Task): Promise<void> {
     await this.syncTask({ column: task.column === 'backlog' ? 'todo' : 'backlog' }, task);
@@ -78,10 +141,14 @@ export class IssueService {
     if (this.polling.has(projectId)) return 0; // start-up poll, ticker and "Fetch now" must not overlap
     this.polling.add(projectId);
     try {
+      // soft-deleted tasks still count as imported until they are purged
       const existing = new Set(
-        (await this.ctx.store.listTasks(projectId)).map((t) => t.source_external_id).filter(Boolean),
+        (await this.ctx.store.listTasks(projectId, { includeDeleted: true }))
+          .map((t) => t.source_external_id)
+          .filter(Boolean),
       );
       const issues = await link.provider.listIssues();
+      await this.pullUpdates(projectId, issues);
       const fresh = issues.filter(
         (i) =>
           !existing.has(i.externalId) && IssueService.importColumn(link.row.status_map, i.status) !== 'skip',

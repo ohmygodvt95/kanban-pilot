@@ -78,6 +78,9 @@ the main working tree of your repo is never touched by an agent.
   plus an optional comment; Done closes GitHub/GitLab issues).
 - **Guided tour.** The first visit to the projects page and to a board opens a short spotlight tour (English, or
   Vietnamese when the browser prefers it). Replay it any time from the ⋯ menu → *Show the tour*.
+- **Two-way sync with the tracker.** Title/description edits on a linked task are pushed to the issue; edits and new
+  human comments made on the tracker are pulled on the next poll (comments appear in the task's Chat, marked as
+  coming from the tracker). Jira user-picker and cascading-select fields are supported in the push form.
 - **Push local tasks to the tracker.** A task created on the board can be sent the other way with *Push to
   <tracker>* in its Overview (or automatically the first time it reaches *To do* — *Auto-push* on the Integration
   screen). The tracker's create metadata is read first (Jira `createmeta`, labels for GitHub/GitLab); *Push
@@ -88,6 +91,20 @@ the main working tree of your repo is never touched by an agent.
   *auto* and the planner fills them during refinement; imported issues get them from labels (`bug`, `enhancement`,
   `priority::high`, `P0`…). Urgent/high tasks run first when `max_concurrent_runs` is saturated; the board has
   "Bugs" and "Urgent" quick filters.
+
+- **Undo for "Clear all tasks".** Cleared tasks are only hidden for 10 minutes; the toast offers *Undo*. Worktrees of
+  running attempts are still discarded immediately (a restored task lands back in *To do*).
+- **Spending caps, cost chart, disk cleanup.** Each project can cap spend per day and per week (new runs are refused
+  once reached); Settings shows a 14-day cost chart and the disk footprint of worktrees and logs, with a one-click
+  cleanup of what finished work left behind.
+- **Backup.** The projects page exports the whole database as one JSON file and merges such a file back in (ids
+  already present are skipped). Attachments and worktrees are not included; tracker credentials are.
+- **Remote access with a token.** Binding to a non-loopback host (`--host 0.0.0.0`) turns on bearer-token
+  authentication; the CLI prints the URL with the token (or set `--token` / `AK_TOKEN`). The UI stores it on the
+  first visit and asks for it after a 401.
+- **Command palette, keyboard drag & drop, UI language.** Ctrl/⌘+K jumps to any task, project or action. Cards can be
+  moved with the keyboard (focus a card, Space, arrows, Space). The ⋯ menu switches the interface between English and
+  Vietnamese and shows a notice when a newer version is on npm.
 
 ## Project settings
 

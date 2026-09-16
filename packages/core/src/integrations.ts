@@ -7,6 +7,7 @@ import type {
   Integration,
   ProviderId,
   ProviderModuleInfo,
+  RemoteUser,
   StatusMap,
 } from '@agent-kanban/shared';
 import { COLUMNS } from '@agent-kanban/shared';
@@ -113,6 +114,13 @@ export class IntegrationService {
     const p = await this.provider(projectId);
     if (!p) throw new CoreError('CONFLICT', 'no tracker configured for this project');
     return p.provider.createMeta();
+  }
+
+  /** Tracker users matching `query` (user-picker fields of the push form). */
+  async searchUsers(projectId: string, query: string): Promise<RemoteUser[]> {
+    const p = await this.provider(projectId);
+    if (!p) throw new CoreError('CONFLICT', 'no tracker configured for this project');
+    return p.provider.searchUsers(query);
   }
 
   async remove(projectId: string): Promise<void> {

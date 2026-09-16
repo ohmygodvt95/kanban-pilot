@@ -32,6 +32,8 @@ const projectFieldsSchema = z.object({
   model: z.string().max(100).nullable().optional(),
   /** Hard USD cap per run; null = unlimited. */
   max_budget_usd: z.number().positive().max(10_000).nullable().optional(),
+  daily_budget_usd: z.number().positive().max(100_000).nullable().optional(),
+  weekly_budget_usd: z.number().positive().max(100_000).nullable().optional(),
   prompt_language: promptLanguageSchema.optional(),
   execute_prompt: z.string().nullable().optional(),
   followup_prompt: z.string().nullable().optional(),
@@ -155,3 +157,15 @@ export const apiErrorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }),
 });
 export type ApiError = z.infer<typeof apiErrorSchema>;
+
+/** POST /projects/:id/tasks/restore — undo a bulk delete. */
+export const restoreTasksSchema = z.object({ ids: z.array(z.string()).min(1).max(5000) });
+export type RestoreTasksInput = z.infer<typeof restoreTasksSchema>;
+
+/** POST /projects/:id/tasks/push — push several unlinked tasks with shared field values. */
+export const bulkPushSchema = z.object({
+  ids: z.array(z.string()).min(1).max(500),
+  issue_type_id: z.string().nullable().optional(),
+  fields: z.record(z.string(), z.unknown()).optional(),
+});
+export type BulkPushInput = z.infer<typeof bulkPushSchema>;

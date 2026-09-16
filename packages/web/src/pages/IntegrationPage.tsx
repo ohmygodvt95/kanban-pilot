@@ -395,6 +395,7 @@ function IntegrationForm({
 
         {integration ? (
           <PushDefaultsCard
+            projectId={projectId}
             form={form}
             set={set}
             meta={createMeta.data}
@@ -506,12 +507,14 @@ function StatusRow({
  * has nothing left to ask).
  */
 function PushDefaultsCard({
+  projectId,
   form,
   set,
   meta,
   error,
   statusModel,
 }: {
+  projectId: string;
   form: FormState;
   set: <K extends keyof FormState>(k: K, v: FormState[K]) => void;
   meta: CreateMeta | undefined;
@@ -611,6 +614,7 @@ function PushDefaultsCard({
                   field={f}
                   value={defaults.fields[f.key]}
                   onChange={(v) => update({ fields: { ...defaults.fields, [f.key]: v } })}
+                  projectId={projectId}
                 />
               </Field>
             ))}

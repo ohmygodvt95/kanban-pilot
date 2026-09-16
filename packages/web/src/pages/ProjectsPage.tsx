@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { FolderGit2, Plus, Settings } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Download, FolderGit2, Plus, Settings, Upload } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError, api } from '../api/client';
 import { keys, useExecutors, useProjects } from '../api/queries';
@@ -8,13 +8,15 @@ import { Shell } from '../components/Shell';
 import { TOUR_LABELS, Tour } from '../components/Tour';
 import { Button, Card, EmptyState, Field, inputClass, Modal } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
+import { useI18n } from '../lib/i18n';
 import { EXECUTOR_LABELS } from '../lib/state';
-import { markTourSeen, tourLanguage, tourSeen, tourSteps } from '../lib/tour';
+import { markTourSeen, tourSeen, tourSteps } from '../lib/tour';
 
 export function ProjectsPage() {
   const projects = useProjects();
   const qc = useQueryClient();
   const toast = useToast();
+  const { lang } = useI18n();
   const [repoPath, setRepoPath] = useState('');
   // Welcome tour on the very first visit (no projects yet).
   const [tour, setTour] = useState(false);
@@ -91,7 +93,7 @@ export function ProjectsPage() {
         </Modal>
       ) : null}
       {tour ? (
-        <Tour steps={tourSteps('projects')} labels={TOUR_LABELS[tourLanguage()]} onClose={closeTour} />
+        <Tour steps={tourSteps('projects', lang)} labels={TOUR_LABELS[lang]} onClose={closeTour} />
       ) : null}
       <div className="mx-auto max-w-5xl p-6">
         <div className="mb-6">
@@ -198,6 +200,7 @@ export function ProjectsPage() {
               </p>
             </form>
           </Card>
+          <BackupCard />
         </div>
       </div>
     </Shell>
@@ -225,5 +228,76 @@ export function ExecutorStatusRow({ projectId }: { projectId: string }) {
         </span>
       ))}
     </div>
+  );
+}
+
+/** Export the whole database as JSON, or merge a previous export into it. */
+function BackupCard() {
+  const { t } = useI18n();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const file = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const download = async (events: boolean) => {
+    setBusy(true);
+    try {
+      const doc = await api.backup.export(events);
+      const blob = new Blob([JSON.stringify(doc)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `agent-kanban-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const upload = async (f: File | undefined) => {
+    if (!f) return;
+    setBusy(true);
+    try {
+      const counts = await api.backup.import(JSON.parse(await f.text()));
+      const summary = Object.entries(counts)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => `${n} ${k}`)
+        .join(', ');
+      toast.push({
+        kind: 'success',
+        text: t('backup.imported', { summary: summary || '0' }),
+        duration: 8000,
+      });
+      void qc.invalidateQueries();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+      if (file.current) file.current.value = '';
+    }
+  };
+  return (
+    <Card title={t('backup.title')}>
+      <p className="mb-3 text-xs text-zinc-500">{t('backup.body')}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" icon={<Download size={13} />} loading={busy} onClick={() => download(true)}>
+          {t('backup.export')}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => download(false)}>
+          {t('backup.exportNoEvents')}
+        </Button>
+        <Button size="sm" icon={<Upload size={13} />} disabled={busy} onClick={() => file.current?.click()}>
+          {t('backup.import')}
+        </Button>
+        <input
+          ref={file}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => void upload(e.target.files?.[0])}
+        />
+      </div>
+    </Card>
   );
 }

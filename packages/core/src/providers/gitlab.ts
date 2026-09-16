@@ -1,13 +1,21 @@
 import type { Column } from '@agent-kanban/shared';
 import type {
+  ExternalComment,
   ExternalIssue,
   IssueProvider,
   ProviderConfig,
   ProviderModule,
   PullRequestInput,
+  RemoteUser,
   SyncContext,
 } from './types.js';
-import { type CreateIssueInput, classifyLabels, jsonRequest, labelsCreateMeta } from './types.js';
+import {
+  type CreateIssueInput,
+  classifyLabels,
+  jsonRequest,
+  labelsCreateMeta,
+  OWN_COMMENT_PREFIX,
+} from './types.js';
 
 /** GitLab.com or self-hosted; `projectRef` is the project path ("group/sub/project"). */
 class GitLabProvider implements IssueProvider {
@@ -62,6 +70,7 @@ class GitLabProvider implements IssueProvider {
       labels,
       status,
       ...classifyLabels(labels),
+      updatedAt: raw.updated_at ?? null,
     };
   }
 
@@ -111,6 +120,45 @@ class GitLabProvider implements IssueProvider {
     });
   }
 
+  async updateIssue(externalId: string, patch: { title?: string; body?: string }): Promise<ExternalIssue> {
+    return this.toIssue(
+      await this.request<GitLabIssue>(`/projects/${this.project}/issues/${externalId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.body !== undefined ? { description: patch.body } : {}),
+        }),
+      }),
+    );
+  }
+
+  async listComments(externalId: string): Promise<ExternalComment[]> {
+    const raw = await this.request<
+      {
+        id: number;
+        body: string;
+        created_at: string;
+        system?: boolean;
+        author?: { name?: string; username?: string };
+      }[]
+    >(`/projects/${this.project}/issues/${externalId}/notes?per_page=100&sort=asc&order_by=created_at`);
+    return raw
+      .filter((n) => !n.system && !n.body.startsWith(OWN_COMMENT_PREFIX))
+      .map((n) => ({
+        externalId: String(n.id),
+        author: n.author?.name ?? n.author?.username ?? 'unknown',
+        body: n.body,
+        createdAt: n.created_at,
+      }));
+  }
+
+  async searchUsers(query: string): Promise<RemoteUser[]> {
+    const raw = await this.request<{ id: number; name: string; username: string }[]>(
+      `/projects/${this.project}/users?search=${encodeURIComponent(query)}&per_page=20`,
+    );
+    return raw.map((u) => ({ id: String(u.id), name: `${u.name} (@${u.username})` }));
+  }
+
   /** Merge request (GitLab's pull request). */
   async createPullRequest(input: PullRequestInput): Promise<string> {
     const mr = await this.request<{ web_url: string }>(`/projects/${this.project}/merge_requests`, {
@@ -150,6 +198,7 @@ interface GitLabIssue {
   description: string | null;
   state: 'opened' | 'closed';
   labels?: string[];
+  updated_at?: string;
 }
 
 const DEFAULT_STATUS_MAP: Record<Column, string[]> = {

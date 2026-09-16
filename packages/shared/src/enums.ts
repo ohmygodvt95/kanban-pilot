@@ -48,7 +48,7 @@ export type RunStatus = z.infer<typeof runStatusSchema>;
 export const runEventTypeSchema = z.enum(['system', 'assistant', 'user', 'result', 'stderr', 'raw']);
 export type RunEventType = z.infer<typeof runEventTypeSchema>;
 
-export const commentKindSchema = z.enum(['feedback', 'answer', 'note', 'chat']);
+export const commentKindSchema = z.enum(['feedback', 'answer', 'note', 'chat', 'tracker']);
 export type CommentKind = z.infer<typeof commentKindSchema>;
 
 export const jobStatusSchema = z.enum(['queued', 'running', 'done', 'failed']);

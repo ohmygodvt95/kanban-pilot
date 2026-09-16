@@ -1,13 +1,21 @@
 import type { Column } from '@agent-kanban/shared';
 import type {
+  ExternalComment,
   ExternalIssue,
   IssueProvider,
   ProviderConfig,
   ProviderModule,
   PullRequestInput,
+  RemoteUser,
   SyncContext,
 } from './types.js';
-import { type CreateIssueInput, classifyLabels, jsonRequest, labelsCreateMeta } from './types.js';
+import {
+  type CreateIssueInput,
+  classifyLabels,
+  jsonRequest,
+  labelsCreateMeta,
+  OWN_COMMENT_PREFIX,
+} from './types.js';
 
 const DEFAULT_API = 'https://api.github.com';
 
@@ -71,6 +79,7 @@ class GitHubProvider implements IssueProvider {
       labels,
       status,
       ...classifyLabels(labels),
+      updatedAt: raw.updated_at ?? null,
     };
   }
 
@@ -130,6 +139,40 @@ class GitHubProvider implements IssueProvider {
     });
   }
 
+  async updateIssue(externalId: string, patch: { title?: string; body?: string }): Promise<ExternalIssue> {
+    return this.toIssue(
+      await this.request<GitHubIssue>(`/repos/${this.cfg.projectRef}/issues/${externalId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    );
+  }
+
+  async listComments(externalId: string): Promise<ExternalComment[]> {
+    const raw = await this.request<
+      { id: number; body?: string; created_at: string; user?: { login: string } }[]
+    >(`/repos/${this.cfg.projectRef}/issues/${externalId}/comments?per_page=100`);
+    return raw
+      .filter((c) => !(c.body ?? '').startsWith(OWN_COMMENT_PREFIX))
+      .map((c) => ({
+        externalId: String(c.id),
+        author: c.user?.login ?? 'unknown',
+        body: c.body ?? '',
+        createdAt: c.created_at,
+      }));
+  }
+
+  /** Assignable collaborators of the repository. */
+  async searchUsers(query: string): Promise<RemoteUser[]> {
+    const raw = await this.request<{ login: string }[]>(
+      `/repos/${this.cfg.projectRef}/assignees?per_page=100`,
+    );
+    const q = query.toLowerCase();
+    return raw
+      .filter((u) => !q || u.login.toLowerCase().includes(q))
+      .map((u) => ({ id: u.login, name: u.login }));
+  }
+
   async createPullRequest(input: PullRequestInput): Promise<string> {
     const pr = await this.request<{ html_url: string }>(`/repos/${this.cfg.projectRef}/pulls`, {
       method: 'POST',
@@ -160,6 +203,7 @@ interface GitHubIssue {
   state: 'open' | 'closed';
   labels?: ({ name: string } | string)[];
   pull_request?: unknown;
+  updated_at?: string;
 }
 
 const DEFAULT_STATUS_MAP: Record<Column, string[]> = {

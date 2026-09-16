@@ -5,6 +5,10 @@ export interface ToastItem {
   id: number;
   kind: 'info' | 'error' | 'success';
   text: string;
+  /** Optional button (e.g. "Undo"); the toast closes after it is clicked. */
+  action?: { label: string; onClick: () => void };
+  /** Milliseconds before auto-dismiss (default 4 s, errors 8 s). */
+  duration?: number;
 }
 
 interface ToastApi {
@@ -19,8 +23,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const push = useCallback((t: Omit<ToastItem, 'id'>) => {
     const id = Date.now() + Math.random();
     setItems((old) => [...old, { ...t, id }]);
-    setTimeout(() => setItems((old) => old.filter((x) => x.id !== id)), t.kind === 'error' ? 8000 : 4000);
+    setTimeout(
+      () => setItems((old) => old.filter((x) => x.id !== id)),
+      t.duration ?? (t.kind === 'error' ? 8000 : 4000),
+    );
   }, []);
+  const dismiss = useCallback((id: number) => setItems((old) => old.filter((x) => x.id !== id)), []);
   const api = useMemo<ToastApi>(
     () => ({
       push,
@@ -52,7 +60,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             }`}
           >
             <span className="mt-0.5 shrink-0">{icons[t.kind]}</span>
-            <span>{t.text}</span>
+            <span className="flex-1">{t.text}</span>
+            {t.action ? (
+              <button
+                type="button"
+                className="shrink-0 rounded-md border border-current/30 px-2 py-0.5 font-medium text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                onClick={() => {
+                  t.action?.onClick();
+                  dismiss(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
+            ) : null}
           </div>
         ))}
       </div>

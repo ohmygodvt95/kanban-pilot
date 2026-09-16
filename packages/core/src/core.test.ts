@@ -329,6 +329,49 @@ describe('core end-to-end with fake executor', () => {
     expect((await core.store.getTask(a.id)).column).toBe('review');
   });
 
+  it('refuses new runs once the daily budget is spent', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    await core.projects.update(project.id, { daily_budget_usd: 0.5 });
+    const t1 = await core.tasks.create(project.id, { title: 'first', description: 'x' });
+    await core.tasks.transition(t1.id, 'todo', 'user');
+    const reviewP = waitState(t1.id, 'review');
+    await core.tasks.transition(t1.id, 'doing', 'user');
+    await reviewP;
+    // pretend that run cost more than the cap
+    const [run] = await core.store.listRuns(t1.id);
+    await core.store.updateRun(run!.id, { cost_usd: 0.75 });
+    const t2 = await core.tasks.create(project.id, { title: 'second', description: 'x' });
+    await core.tasks.transition(t2.id, 'todo', 'user');
+    await expect(core.tasks.transition(t2.id, 'doing', 'user')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringMatching(/daily budget reached/),
+    });
+    const costs = await core.maintenance.costs(project.id, 3);
+    expect(costs.today_usd).toBeCloseTo(0.75);
+    expect(costs.days.at(-1)?.runs).toBe(1);
+    // the run's logs are not reclaimable while the task is in REVIEW, the worktree is active
+    const disk = await core.maintenance.disk(project.id);
+    expect(disk.worktrees_bytes).toBeGreaterThan(0);
+    expect(disk.reclaimable_items).toBe(0);
+    await core.tasks.transition(t1.id, 'done', 'user');
+    const after = await core.maintenance.disk(project.id);
+    expect(after.reclaimable_items).toBeGreaterThanOrEqual(1);
+    const cleaned = await core.maintenance.clean(project.id);
+    expect(cleaned.removed).toBe(after.reclaimable_items);
+    expect((await core.maintenance.disk(project.id)).reclaimable_items).toBe(0);
+  });
+
+  it('exports and re-imports the database as a backup (merge, no duplicates)', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    await core.tasks.create(project.id, { title: 'kept', description: '' });
+    const doc = await core.backup.export();
+    expect(doc.tables.projects).toHaveLength(1);
+    expect(doc.tables.tasks).toHaveLength(1);
+    // importing into the same DB inserts nothing (ids exist); a foreign dump would be merged
+    expect(await core.backup.import(doc)).toMatchObject({ projects: 0, tasks: 0 });
+    await expect(core.backup.import({ foo: 1 })).rejects.toMatchObject({ code: 'VALIDATION' });
+  });
+
   it('deletes every task of a project at once, skipping or force-cancelling running ones', async () => {
     const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
     const idle = await core.tasks.create(project.id, { title: 'idle', description: 'x' });
@@ -337,13 +380,26 @@ describe('core end-to-end with fake executor', () => {
     const runningP = waitState(busy.id, 'doing', 'running');
     await core.tasks.transition(busy.id, 'doing', 'user');
     await runningP;
-    expect(await core.tasks.deleteAll(project.id)).toEqual({ deleted: 1, skipped: 1 });
-    expect(await core.store.findTask(idle.id)).toBeNull();
+    expect(await core.tasks.deleteAll(project.id)).toEqual({ deleted: 1, skipped: 1, ids: [idle.id] });
+    // soft-deleted: hidden from the board, still restorable
+    expect((await core.store.listTasks(project.id)).map((t) => t.id)).toEqual([busy.id]);
+    expect((await core.store.findTask(idle.id))?.deleted_at).toBeTruthy();
     expect((await core.store.getTask(busy.id)).substate).toBe('running');
     const wt = (await core.tasks.detail(busy.id)).current_attempt!.worktree_path;
-    expect(await core.tasks.deleteAll(project.id, { force: true })).toEqual({ deleted: 1, skipped: 0 });
+    const forced = await core.tasks.deleteAll(project.id, { force: true });
+    expect(forced).toMatchObject({ deleted: 1, skipped: 0, ids: [busy.id] });
     expect(await core.store.listTasks(project.id)).toEqual([]);
     expect(existsSync(wt)).toBe(false);
+    // undo brings both back; the one whose worktree was discarded lands in TODO with a note
+    const restored = await core.tasks.restore(project.id, [idle.id, busy.id]);
+    expect(restored.map((t) => t.id).sort()).toEqual([idle.id, busy.id].sort());
+    const back = await core.store.getTask(busy.id);
+    expect(back.column).toBe('todo');
+    expect(back.last_error).toMatch(/discarded/);
+    // past the undo window the rows are purged for good
+    await core.tasks.deleteAll(project.id);
+    expect(await core.store.purgeDeletedTasks(-1)).toBe(2);
+    expect(await core.store.findTask(idle.id)).toBeNull();
   });
 
   it('project creation validates the repo path and reads .agent-kanban.json', async () => {
@@ -842,6 +898,53 @@ describe('issue tracker integration, classification and priority queue', () => {
   afterEach(async () => {
     await core.stop({ killProcesses: true });
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('pulls tracker edits and comments into linked tasks and pushes local text edits back', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    await core.integrations.upsert(project.id, { provider: 'github', project_ref: 'acme/app', token: 'x' });
+    tracker.issues = [
+      {
+        externalId: '5',
+        url: 'https://fake/5',
+        title: 'Remote title',
+        body: 'remote body',
+        labels: ['agent'],
+        status: 'Backlog',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    const [task] = await core.projects.importIssues(project.id, ['5']);
+    expect(task!.source_updated_at).toBe('2026-01-01T00:00:00.000Z');
+    // remote edit + a human comment → pulled on the next poll (our own comments are filtered by the provider)
+    tracker.issues[0]!.title = 'Remote title v2';
+    tracker.issues[0]!.updatedAt = '2026-01-02T00:00:00.000Z';
+    tracker.remoteComments.set('5', [
+      { externalId: 'c1', author: 'alice', body: 'please also fix X', createdAt: '2026-01-02T00:00:00.000Z' },
+    ]);
+    await core.issues.pollAll();
+    let t = await core.store.getTask(task!.id);
+    expect(t.title).toBe('Remote title v2');
+    expect(t.source_updated_at).toBe('2026-01-02T00:00:00.000Z');
+    let comments = await core.store.listComments(task!.id);
+    expect(comments.map((c) => [c.kind, c.author, c.body])).toEqual([
+      ['tracker', 'alice', 'please also fix X'],
+    ]);
+    await core.issues.pollAll(); // same watermark → nothing re-imported
+    comments = await core.store.listComments(task!.id);
+    expect(comments).toHaveLength(1);
+    // local edit → pushed to the tracker; the watermark advances so it is not pulled back
+    await core.tasks.update(task!.id, { title: 'Local title' });
+    expect(tracker.updates).toEqual([{ ref: '5', patch: { title: 'Local title' } }]);
+    t = await core.store.getTask(task!.id);
+    expect(t.source_updated_at).toBe(tracker.issues[0]!.updatedAt);
+    await core.issues.pollAll();
+    expect((await core.store.getTask(task!.id)).title).toBe('Local title');
+    // a cleared (soft-deleted) imported task is not re-imported by the poll
+    await core.tasks.deleteAll(project.id);
+    await core.issues.pollAll();
+    expect(await core.store.listTasks(project.id)).toEqual([]);
+    expect(await core.integrations.searchUsers(project.id, 'ali')).toEqual([{ id: 'alice', name: 'Alice' }]);
   });
 
   it('configures one integration per project, masks secrets and tests the connection', async () => {

@@ -120,30 +120,32 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
         </div>
       ) : null}
 
-      <Actions
-        task={task}
-        project={project}
-        toast={toast}
-        busy={busy}
-        activeRunId={activeRun?.id}
-        run={run}
-        transition={transition}
-        confirm={confirm}
-        pending={act.isPending}
-        trackerName={
-          provider.data?.ok && !task.source_external_id && task.column !== 'done' ? provider.data.id : null
-        }
-        onPush={async () => {
-          try {
-            upsertTask(qc, await api.tasks.push(task.id, {}));
-            toast.push({ kind: 'success', text: `Created on ${provider.data?.id}` });
-          } catch (err) {
-            if (err instanceof ApiError && err.code === 'CONFIRM_REQUIRED')
-              setPushRequest(err.details as PushRequest);
-            else toast.error(err, 'Push failed');
+      <div data-tour="task-actions">
+        <Actions
+          task={task}
+          project={project}
+          toast={toast}
+          busy={busy}
+          activeRunId={activeRun?.id}
+          run={run}
+          transition={transition}
+          confirm={confirm}
+          pending={act.isPending}
+          trackerName={
+            provider.data?.ok && !task.source_external_id && task.column !== 'done' ? provider.data.id : null
           }
-        }}
-      />
+          onPush={async () => {
+            try {
+              upsertTask(qc, await api.tasks.push(task.id, {}));
+              toast.push({ kind: 'success', text: `Created on ${provider.data?.id}` });
+            } catch (err) {
+              if (err instanceof ApiError && err.code === 'CONFIRM_REQUIRED')
+                setPushRequest(err.details as PushRequest);
+              else toast.error(err, 'Push failed');
+            }
+          }}
+        />
+      </div>
 
       {task.column === 'backlog' && task.substate === 'needs_answer' && openQuestions.length ? (
         <Questions task={task} />
@@ -654,6 +656,13 @@ function Actions({
       },
     });
   }
+  if (trackerName)
+    buttons.push({
+      label: `Push to ${trackerName}`,
+      icon: <Upload size={13} />,
+      title: 'Create this task as an issue on the linked tracker',
+      onClick: onPush,
+    });
   if (column === 'done')
     buttons.push({
       label: 'Clone task',

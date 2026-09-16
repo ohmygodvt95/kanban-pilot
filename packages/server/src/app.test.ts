@@ -355,8 +355,82 @@ describe('HTTP API', () => {
     expect(before.length).toBeGreaterThanOrEqual(2);
     const res = await app.request(`/api/projects/${project.id}/tasks?force=1`, { method: 'DELETE' });
     expect(res.status).toBe(200);
-    expect((await json<{ deleted: number; skipped: number }>(res)).skipped).toBe(0);
+    const cleared = await json<{ deleted: number; skipped: number; ids: string[] }>(res);
+    expect(cleared.skipped).toBe(0);
+    expect(cleared.ids.length).toBe(cleared.deleted);
     expect(await json<Task[]>(await app.request(`/api/projects/${project.id}/tasks`))).toEqual([]);
+    // undo
+    const restored = await json<Task[]>(
+      await post(`/api/projects/${project.id}/tasks/restore`, { ids: cleared.ids }),
+    );
+    expect(restored.length).toBe(cleared.deleted);
+    expect((await json<Task[]>(await app.request(`/api/projects/${project.id}/tasks`))).length).toBe(
+      cleared.deleted,
+    );
+  });
+
+  it('pushes several tasks at once and reports costs, disk usage and a backup', async () => {
+    await app.request(`/api/projects/${project.id}/integration`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'github', project_ref: 'acme/app', token: 't' }),
+    });
+    const a = await json<Task>(
+      await post(`/api/projects/${project.id}/tasks`, { title: 'bulk a', description: 'x' }),
+    );
+    const b = await json<Task>(
+      await post(`/api/projects/${project.id}/tasks`, { title: 'bulk b', description: 'x' }),
+    );
+    const ask = await post(`/api/projects/${project.id}/tasks/push`, { ids: [a.id, b.id] });
+    expect(ask.status).toBe(409);
+    const done = await json<{ pushed: Task[]; failed: unknown[] }>(
+      await post(`/api/projects/${project.id}/tasks/push`, {
+        ids: [a.id, b.id],
+        fields: { components: 'c1' },
+      }),
+    );
+    expect(done.pushed.map((t) => t.id).sort()).toEqual([a.id, b.id].sort());
+    expect(done.failed).toEqual([]);
+    const users = await json<{ id: string }[]>(
+      await app.request(`/api/projects/${project.id}/integration/users?q=bo`),
+    );
+    expect(users.map((u) => u.id)).toEqual(['bob']);
+    await app.request(`/api/projects/${project.id}/integration`, { method: 'DELETE' });
+
+    const costs = await json<{ days: unknown[]; total_usd: number }>(
+      await app.request(`/api/projects/${project.id}/costs?days=7`),
+    );
+    expect(costs.days).toHaveLength(7);
+    const disk = await json<{ worktrees_bytes: number; reclaimable_items: number }>(
+      await app.request(`/api/projects/${project.id}/disk`),
+    );
+    expect(disk.reclaimable_items).toBeGreaterThanOrEqual(0);
+    expect((await post(`/api/projects/${project.id}/disk/clean`)).status).toBe(200);
+
+    const backup = await app.request('/api/backup?events=0');
+    expect(backup.headers.get('content-disposition')).toMatch(/agent-kanban-.*\.json/);
+    const doc = await json<{ app: string; tables: Record<string, unknown[]> }>(backup);
+    expect(doc.app).toBe('agent-kanban');
+    expect(doc.tables.run_events).toBeUndefined();
+    expect((await post('/api/backup', doc)).status).toBe(200);
+    expect((await post('/api/backup', { nope: true })).status).toBe(400);
+  });
+
+  it('guards the API with a bearer token when configured and reports it in health', async () => {
+    const guarded = createApp({ core, token: 's3cret', version: '1.2.3', updateCheck: false });
+    const health = await json<{ version: string; auth_required: boolean }>(
+      await guarded.request('/api/health'),
+    );
+    expect(health).toMatchObject({ version: '1.2.3', auth_required: true });
+    expect((await guarded.request('/api/projects')).status).toBe(401);
+    expect(
+      (await guarded.request('/api/projects', { headers: { authorization: 'Bearer wrong' } })).status,
+    ).toBe(401);
+    expect(
+      (await guarded.request('/api/projects', { headers: { authorization: 'Bearer s3cret' } })).status,
+    ).toBe(200);
+    // EventSource cannot set headers: the token may come as a query parameter
+    expect((await guarded.request('/api/projects?token=s3cret')).status).toBe(200);
   });
 
   it('serves the SPA with fallback and keeps /api JSON 404s', async () => {

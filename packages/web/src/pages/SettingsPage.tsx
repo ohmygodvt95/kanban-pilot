@@ -6,8 +6,8 @@ import type {
   UpdateProjectInput,
 } from '@agent-kanban/shared';
 import { EXECUTOR_IDS } from '@agent-kanban/shared';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plug, Save, Trash2 } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Broom, Plug, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
@@ -15,6 +15,8 @@ import { keys, useProject, useProvider, useTasks } from '../api/queries';
 import { Shell } from '../components/Shell';
 import { Button, Card, DangerConfirm, Field, inputClass, Switch, useConfirm } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
+import { formatBytes } from '../lib/format';
+import { useI18n } from '../lib/i18n';
 import { EXECUTOR_LABELS } from '../lib/state';
 import { ExecutorStatusRow } from './ProjectsPage';
 
@@ -41,6 +43,8 @@ type Form = Required<
     | 'refinement_prompt'
     | 'model'
     | 'max_budget_usd'
+    | 'daily_budget_usd'
+    | 'weekly_budget_usd'
     | 'execute_prompt'
     | 'followup_prompt'
   >
@@ -50,6 +54,8 @@ type Form = Required<
   refinement_prompt: string;
   model: string;
   max_budget_usd: string;
+  daily_budget_usd: string;
+  weekly_budget_usd: string;
   execute_prompt: string;
   followup_prompt: string;
 };
@@ -67,6 +73,8 @@ const toForm = (p: Project): Form => ({
   refinement_prompt: p.refinement_prompt ?? '',
   model: p.model ?? '',
   max_budget_usd: p.max_budget_usd === null ? '' : String(p.max_budget_usd),
+  daily_budget_usd: p.daily_budget_usd === null ? '' : String(p.daily_budget_usd),
+  weekly_budget_usd: p.weekly_budget_usd === null ? '' : String(p.weekly_budget_usd),
   prompt_language: p.prompt_language,
   execute_prompt: p.execute_prompt ?? '',
   followup_prompt: p.followup_prompt ?? '',
@@ -78,6 +86,7 @@ const toForm = (p: Project): Form => ({
 const orNull = (v: string) => (v.trim() ? v : null);
 
 function SettingsForm({ project }: { project: Project }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -112,6 +121,8 @@ function SettingsForm({ project }: { project: Project }) {
         followup_prompt: orNull(form.followup_prompt),
         model: orNull(form.model),
         max_budget_usd: form.max_budget_usd.trim() ? Number(form.max_budget_usd) : null,
+        daily_budget_usd: form.daily_budget_usd.trim() ? Number(form.daily_budget_usd) : null,
+        weekly_budget_usd: form.weekly_budget_usd.trim() ? Number(form.weekly_budget_usd) : null,
       }),
     onSuccess: (p) => {
       qc.setQueryData(keys.project(p.id), p);
@@ -392,6 +403,38 @@ function SettingsForm({ project }: { project: Project }) {
           </div>
         </Card>
 
+        <Card title={t('settings.budget')}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('settings.budget.daily')} hint={t('settings.budget.hint')}>
+              <input
+                type="number"
+                min={0.5}
+                step={1}
+                className={inputClass}
+                value={form.daily_budget_usd}
+                onChange={(e) => set('daily_budget_usd', e.target.value)}
+                placeholder="20"
+              />
+            </Field>
+            <Field label={t('settings.budget.weekly')}>
+              <input
+                type="number"
+                min={1}
+                step={5}
+                className={inputClass}
+                value={form.weekly_budget_usd}
+                onChange={(e) => set('weekly_budget_usd', e.target.value)}
+                placeholder="100"
+              />
+            </Field>
+          </div>
+          <div className="mt-4">
+            <CostChart projectId={project.id} />
+          </div>
+        </Card>
+
+        <DiskCard projectId={project.id} />
+
         <Card title="Issue tracker">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-zinc-600 dark:text-zinc-300">
@@ -434,5 +477,106 @@ function SettingsForm({ project }: { project: Project }) {
         </Card>
       </form>
     </div>
+  );
+}
+
+/** Bars of daily spend for the last two weeks, with today/week/total figures. */
+function CostChart({ projectId }: { projectId: string }) {
+  const { t } = useI18n();
+  const costs = useQuery({
+    queryKey: ['costs', projectId],
+    queryFn: () => api.projects.costs(projectId, 14),
+    staleTime: 30_000,
+  });
+  if (!costs.data) return null;
+  const max = Math.max(0.01, ...costs.data.days.map((d) => d.usd));
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap gap-4 text-xs text-zinc-500">
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">{t('settings.costs')}</span>
+        <span>
+          ${costs.data.today_usd.toFixed(2)} {t('settings.costs.today')}
+        </span>
+        <span>
+          ${costs.data.week_usd.toFixed(2)} {t('settings.costs.week')}
+        </span>
+        <span>
+          ${costs.data.total_usd.toFixed(2)} {t('settings.costs.total')}
+        </span>
+      </div>
+      <div className="flex h-20 items-end gap-1">
+        {costs.data.days.map((d) => (
+          <div
+            key={d.day}
+            className="group relative flex flex-1 flex-col justify-end"
+            title={`${d.day}: $${d.usd.toFixed(2)} · ${d.runs} run(s)`}
+          >
+            <div
+              className="rounded-t bg-accent-500/80 transition group-hover:bg-accent-600"
+              style={{ height: `${Math.max(2, (d.usd / max) * 100)}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between text-[10px] text-zinc-400">
+        <span>{costs.data.days[0]?.day.slice(5)}</span>
+        <span>{costs.data.days.at(-1)?.day.slice(5)}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Worktrees + agent logs on disk, with a one-click cleanup of finished work. */
+function DiskCard({ projectId }: { projectId: string }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const disk = useQuery({
+    queryKey: ['disk', projectId],
+    queryFn: () => api.projects.disk(projectId),
+    staleTime: 30_000,
+  });
+  const clean = useMutation({
+    mutationFn: () => api.projects.cleanDisk(projectId),
+    onSuccess: (r) => {
+      toast.push({ kind: 'success', text: t('settings.disk.cleaned', { size: formatBytes(r.freed_bytes) }) });
+      void qc.invalidateQueries({ queryKey: ['disk', projectId] });
+    },
+    onError: (e) => toast.error(e),
+  });
+  const d = disk.data;
+  return (
+    <Card title={t('settings.disk')}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm text-zinc-600 dark:text-zinc-300">
+          {d ? (
+            <>
+              <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                {formatBytes(d.worktrees_bytes)}
+              </span>{' '}
+              {t('settings.disk.worktrees')} ·{' '}
+              <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                {formatBytes(d.logs_bytes)}
+              </span>{' '}
+              {t('settings.disk.logs')}
+              <div className="text-xs text-zinc-500">
+                {formatBytes(d.reclaimable_bytes)}{' '}
+                {t('settings.disk.reclaimable', { n: d.reclaimable_items })}
+              </div>
+            </>
+          ) : (
+            '…'
+          )}
+        </div>
+        <Button
+          icon={<Broom size={14} />}
+          loading={clean.isPending}
+          disabled={!d?.reclaimable_items}
+          onClick={() => clean.mutate()}
+        >
+          {t('settings.disk.clean')}
+        </Button>
+      </div>
+    </Card>
   );
 }

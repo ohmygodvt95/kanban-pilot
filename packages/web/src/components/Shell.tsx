@@ -6,10 +6,14 @@
  *   ≥ md : logo · project · center · stats · primary · nav icons · [⋯ actions]
  *   < md : logo · project · center · primary · [⋯ actions + nav + status]
  */
+import { useQuery } from '@tanstack/react-query';
 import {
+  ArrowUpCircle,
   Bell,
   BellOff,
   ChevronDown,
+  Command,
+  Languages,
   LayoutDashboard,
   MoreVertical,
   Plug,
@@ -19,7 +23,9 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { api } from '../api/client';
 import { useProjects } from '../api/queries';
+import { useI18n } from '../lib/i18n';
 import { notificationsEnabled, notificationsSupported, setNotificationsEnabled } from '../lib/notify';
 import { Button, IconButton, type MenuItem, MenuRow, Popover } from './ui';
 import { useToast } from './ui/Toast';
@@ -63,6 +69,7 @@ export function Shell({
   info,
   actions = [],
   subheader,
+  onPalette,
   children,
 }: {
   projectId?: string;
@@ -74,12 +81,18 @@ export function Shell({
   actions?: ShellAction[];
   /** Optional second header row (e.g. filters revealed on small screens). */
   subheader?: ReactNode;
+  /** Opens the command palette (menu entry + Ctrl/⌘+K hint). */
+  onPalette?: () => void;
   children: ReactNode;
 }) {
   const projects = useProjects();
   const navigate = useNavigate();
   const location = useLocation();
   const notify = useNotificationToggle();
+  const { t, lang, setLang } = useI18n();
+  // version pill: the server checks npm once a day; nothing shows while up to date
+  const health = useQuery({ queryKey: ['health'], queryFn: api.health, staleTime: 3_600_000, retry: false });
+  const latest = health.data?.latest_version ?? null;
   const onSettings = location.pathname.endsWith('/settings') || location.pathname.endsWith('/integration');
   const current = projects.data?.find((p) => p.id === projectId);
   const primary = actions.filter((a) => a.primary);
@@ -88,21 +101,37 @@ export function Shell({
   // Navigation entries, rendered as icons (≥ md) or as menu rows (< md).
   const nav: (MenuItem & { to: string })[] = projectId
     ? onSettings
-      ? [{ label: 'Back to the board', icon: <LayoutDashboard />, to: `/p/${projectId}` }]
+      ? [{ label: t('menu.backToBoard'), icon: <LayoutDashboard />, to: `/p/${projectId}` }]
       : [
-          { label: 'Issue tracker integration', icon: <Plug />, to: `/p/${projectId}/integration` },
-          { label: 'Project settings', icon: <Settings />, to: `/p/${projectId}/settings` },
+          { label: t('menu.integration'), icon: <Plug />, to: `/p/${projectId}/integration` },
+          { label: t('menu.settings'), icon: <Settings />, to: `/p/${projectId}/settings` },
         ]
     : [];
   const notifyItem: MenuItem | null = notify.supported
     ? {
-        label: notify.enabled ? 'Notifications on' : 'Enable notifications',
+        label: notify.enabled ? t('menu.notificationsOn') : t('menu.notificationsEnable'),
         icon: notify.enabled ? <Bell /> : <BellOff />,
         active: notify.enabled,
         onClick: () => void notify.toggle(),
       }
     : null;
-  const hasMenu = secondary.length > 0 || nav.length > 0 || notifyItem !== null || !!info || !!live;
+  // always-present rows: language toggle, palette hint, update notice
+  const general: MenuItem[] = [
+    { label: t('menu.language'), icon: <Languages />, onClick: () => setLang(lang === 'vi' ? 'en' : 'vi') },
+    ...(onPalette ? [{ label: `${t('menu.palette')} (Ctrl+K)`, icon: <Command />, onClick: onPalette }] : []),
+    ...(latest
+      ? [
+          {
+            label: t('menu.updateAvailable', { version: latest }),
+            icon: <ArrowUpCircle />,
+            title: t('menu.updateHint'),
+            active: true,
+            onClick: () =>
+              void navigator.clipboard?.writeText('npm install -g agent-kanban@latest').catch(() => {}),
+          },
+        ]
+      : []),
+  ];
 
   const liveBadge = live ? (
     <span
@@ -114,7 +143,7 @@ export function Shell({
       title={`event stream: ${live}`}
     >
       {live === 'open' ? <Wifi size={11} /> : <WifiOff size={11} />}
-      {live === 'open' ? 'live' : live}
+      {live === 'open' ? t('live.open') : live}
     </span>
   ) : null;
 
@@ -205,11 +234,16 @@ export function Shell({
           </div>
 
           {/* overflow menu: always holds the secondary actions; nav/status join it below md */}
-          {hasMenu ? (
+          {
             <Popover
               className="shrink-0"
               button={({ toggle }) => (
-                <IconButton label="More" onClick={toggle} data-tour="menu">
+                <IconButton
+                  label={t('menu.more')}
+                  onClick={toggle}
+                  data-tour="menu"
+                  className={latest ? 'text-accent-600 dark:text-accent-300' : ''}
+                >
                   <MoreVertical size={16} />
                 </IconButton>
               )}
@@ -234,10 +268,14 @@ export function Shell({
                       <MenuRow key={n.to} item={{ ...n, onClick: () => navigate(n.to) }} onPick={close} />
                     ))}
                   </div>
+                  <div className="my-1 border-zinc-200 border-t dark:border-zinc-700" />
+                  {general.map((g) => (
+                    <MenuRow key={g.label} item={g} onPick={close} />
+                  ))}
                 </div>
               )}
             </Popover>
-          ) : null}
+          }
         </div>
         {subheader ? (
           <div className="flex items-center gap-2 overflow-x-auto border-zinc-200 border-t px-3 py-1.5 dark:border-zinc-800">
@@ -245,7 +283,7 @@ export function Shell({
           </div>
         ) : null}
       </header>
-      <main className="min-h-0 flex-1">{children}</main>
+      <main className="relative min-h-0 flex-1">{children}</main>
     </div>
   );
 }

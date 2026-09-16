@@ -177,7 +177,9 @@ export class ProjectService {
   async importIssues(projectId: string, externalIds: string[]): Promise<Task[]> {
     const link = await this.requireProvider(projectId);
     const existing = new Set(
-      (await this.ctx.store.listTasks(projectId)).map((t) => t.source_external_id).filter(Boolean),
+      (await this.ctx.store.listTasks(projectId, { includeDeleted: true }))
+        .map((t) => t.source_external_id)
+        .filter(Boolean),
     );
     const created: Task[] = [];
     for (const id of externalIds) {
@@ -195,6 +197,7 @@ export class ProjectService {
         source_provider: link.row.provider,
         source_external_id: issue.externalId,
         source_url: issue.url,
+        source_updated_at: issue.updatedAt ?? null,
       });
       // Imported "ready" issues go straight to TODO (skip refinement) — the transition also triggers auto-start.
       created.push(column === 'todo' ? await this.tasks().importToTodo(task.id) : task);

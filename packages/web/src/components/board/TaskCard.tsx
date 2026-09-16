@@ -41,7 +41,13 @@ export function TaskCard({
     data: { type: 'task', column: task.column },
     disabled,
   });
-  const style = { transform: CSS.Translate.toString(transform), transition };
+  // content-visibility lets the browser skip layout/paint of off-screen cards in long columns
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    contentVisibility: 'auto',
+    containIntrinsicSize: '0 96px',
+  } as React.CSSProperties;
   const executor = task.executor ?? defaultExecutor;
   const busy = isBusy(task);
   const snippet =

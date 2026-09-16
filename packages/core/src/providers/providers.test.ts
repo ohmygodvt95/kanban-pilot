@@ -134,6 +134,7 @@ describe('provider modules', () => {
           status: 'To Do',
           kind: 'bug',
           priority: 'urgent',
+          updatedAt: null,
         },
       ]);
       const search = calls.find((c) => c.url.endsWith('/search'))!;

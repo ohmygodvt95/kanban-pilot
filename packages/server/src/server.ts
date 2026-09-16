@@ -11,6 +11,8 @@ export interface StartServerOptions {
   webDistDir?: string;
   /** Try the next ports if `port` is busy. */
   findFreePort?: boolean;
+  version?: string;
+  token?: string;
 }
 
 export interface RunningServer {
@@ -34,7 +36,13 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   if (opts.findFreePort) {
     for (let i = 0; i < 50 && !(await isPortFree(port, host)); i++) port++;
   }
-  const app = createApp({ core: opts.core, logger: opts.logger, webDistDir: opts.webDistDir });
+  const app = createApp({
+    core: opts.core,
+    logger: opts.logger,
+    webDistDir: opts.webDistDir,
+    version: opts.version,
+    token: opts.token,
+  });
   const server = await new Promise<ServerType>((resolve, reject) => {
     const s = serve({ fetch: app.fetch, port, hostname: host }, (info) => {
       port = info.port;

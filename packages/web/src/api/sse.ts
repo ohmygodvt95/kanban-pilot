@@ -1,7 +1,8 @@
 import type { Attempt, Run, RunEvent, SseEvent, Task, TaskDetail } from '@agent-kanban/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useToast } from '../components/ui/Toast';
+import { tokenQuery } from '../lib/auth';
 import { notify } from '../lib/notify';
 import { keys, removeTask, upsertTask } from './queries';
 
@@ -9,13 +10,19 @@ import { keys, removeTask, upsertTask } from './queries';
  * Subscribe to /api/events for a project and keep the TanStack Query caches in
  * sync. Returns the connection state for the header indicator.
  */
-export function useProjectEvents(projectId: string): 'connecting' | 'open' | 'reconnecting' {
+export function useProjectEvents(
+  projectId: string,
+  onOpenTask?: (id: string) => void,
+): 'connecting' | 'open' | 'reconnecting' {
   const qc = useQueryClient();
   const toast = useToast();
   const [state, setState] = useState<'connecting' | 'open' | 'reconnecting'>('connecting');
+  // latest callback without making it an effect dependency (that would reconnect on every URL change)
+  const openRef = useRef(onOpenTask);
+  openRef.current = onOpenTask;
 
   useEffect(() => {
-    const es = new EventSource(`/api/events?project_id=${encodeURIComponent(projectId)}`);
+    const es = new EventSource(`/api/events?project_id=${encodeURIComponent(projectId)}${tokenQuery()}`);
     let wasOpen = false;
     es.addEventListener('ready', () => {
       setState('open');
@@ -52,6 +59,16 @@ export function useProjectEvents(projectId: string): 'connecting' | 'open' | 're
           notify('The planner has questions', e.task.title, e.task.id);
         else if (e.task.column === 'done' && prev.column !== 'done')
           notify('Merged', e.task.title, e.task.id);
+      }
+      // auto-push (push_on_todo) could not create the issue: say so right away, with a shortcut to the task
+      const pushError = e.task.last_error?.startsWith('push to tracker failed');
+      if (pushError && prev?.last_error !== e.task.last_error) {
+        toast.push({
+          kind: 'error',
+          text: `${e.task.title}: ${e.task.last_error}`,
+          duration: 12_000,
+          action: { label: 'Open task', onClick: () => openRef.current?.(e.task.id) },
+        });
       }
       upsertTask(qc, e.task);
     });

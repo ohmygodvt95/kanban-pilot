@@ -1,19 +1,24 @@
 import type {
   Attempt,
+  BulkPushInput,
   Comment,
   CreateCommentInput,
   CreateMeta,
   CreateProjectInput,
   CreateTaskInput,
   DiffResult,
+  DiskUsage,
   ExecutorStatus,
   ExternalIssue,
+  Health,
   Integration,
   IntegrationInput,
   Project,
+  ProjectCosts,
   ProviderModuleInfo,
   ProviderStatus,
   PushTaskInput,
+  RemoteUser,
   Run,
   RunEvent,
   Task,
@@ -36,14 +41,17 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = getToken();
   const res = await fetch(`/api${path}`, {
     ...init,
     // JSON bodies are strings; FormData must keep its own multipart content-type (with boundary).
     headers: {
       ...(typeof init.body === 'string' ? { 'content-type': 'application/json' } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(init.headers ?? {}),
     },
   });
+  if (res.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   let body: unknown;
@@ -67,9 +75,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const json = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) });
 
+import { getToken, UNAUTHORIZED_EVENT } from '../lib/auth';
+
 export const api = {
   /** Tracker modules and their configuration fields. */
   providers: () => request<ProviderModuleInfo[]>('/providers'),
+  health: () => request<Health>('/health'),
+  backup: {
+    /** Whole database as a JSON document (downloaded by the caller). */
+    export: (events: boolean) => request<unknown>(`/backup?events=${events ? 1 : 0}`),
+    import: (doc: unknown) => request<Record<string, number>>('/backup', json(doc)),
+  },
   projects: {
     list: () => request<Project[]>('/projects'),
     get: (id: string) => request<Project>(`/projects/${id}`),
@@ -97,14 +113,32 @@ export const api = {
       request<{ ok: boolean; message?: string }>(`/projects/${id}/integration/test`, json(input)),
     integrationStatuses: (id: string) => request<string[]>(`/projects/${id}/integration/statuses`),
     createMeta: (id: string) => request<CreateMeta>(`/projects/${id}/integration/create-meta`),
+    searchUsers: (id: string, q: string) =>
+      request<RemoteUser[]>(`/projects/${id}/integration/users?q=${encodeURIComponent(q)}`),
+    costs: (id: string, days = 14) => request<ProjectCosts>(`/projects/${id}/costs?days=${days}`),
+    disk: (id: string) => request<DiskUsage>(`/projects/${id}/disk`),
+    cleanDisk: (id: string) =>
+      request<{ freed_bytes: number; removed: number }>(`/projects/${id}/disk/clean`, { method: 'POST' }),
+    /** Undo a bulk clear with the ids it returned. */
+    restoreTasks: (id: string, ids: string[]) =>
+      request<Task[]>(`/projects/${id}/tasks/restore`, json({ ids })),
+    /** Push several unlinked tasks with shared field values (409 CONFIRM_REQUIRED lists missing fields). */
+    pushTasks: (id: string, input: BulkPushInput) =>
+      request<{ pushed: Task[]; failed: { id: string; error: string }[] }>(
+        `/projects/${id}/tasks/push`,
+        json(input),
+      ),
     fetchIssues: (id: string) =>
       request<{ imported: number }>(`/projects/${id}/integration/fetch`, { method: 'POST' }),
     tasks: (id: string) => request<Task[]>(`/projects/${id}/tasks`),
     /** Delete every task of the project; `force` also cancels running agents. */
     deleteAllTasks: (id: string, force: boolean) =>
-      request<{ deleted: number; skipped: number }>(`/projects/${id}/tasks${force ? '?force=1' : ''}`, {
-        method: 'DELETE',
-      }),
+      request<{ deleted: number; skipped: number; ids: string[] }>(
+        `/projects/${id}/tasks${force ? '?force=1' : ''}`,
+        {
+          method: 'DELETE',
+        },
+      ),
     createTask: (id: string, input: CreateTaskInput) => request<Task>(`/projects/${id}/tasks`, json(input)),
   },
   tasks: {

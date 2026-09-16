@@ -64,6 +64,13 @@
       "when": 1789551638893,
       "tag": "0008_jazzy_puppet_master",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789567687547,
+      "tag": "0009_red_imperial_guard",
+      "breakpoints": true
     }
   ]
 }

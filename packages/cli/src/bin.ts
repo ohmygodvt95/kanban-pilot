@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import './suppress-warnings.js';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -35,6 +36,8 @@ interface Args {
   retentionDays: number;
   /** `doctor`: print checks as a JSON array instead of text lines. */
   json: boolean;
+  /** API access token; generated automatically when binding to a non-loopback host. */
+  token: string | null;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -47,6 +50,7 @@ function parseArgs(argv: string[]): Args {
     killAgents: false,
     retentionDays: Number(process.env.AK_RETENTION_DAYS ?? 30),
     json: false,
+    token: process.env.AK_TOKEN || null,
   };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -55,6 +59,8 @@ function parseArgs(argv: string[]): Args {
     else if (a.startsWith('--port=')) args.port = Number(a.slice(7));
     else if (a === '--no-open') args.open = false;
     else if (a === '--host') args.host = argv[++i] ?? args.host;
+    else if (a === '--token') args.token = argv[++i] ?? null;
+    else if (a.startsWith('--token=')) args.token = a.slice(8) || null;
     else if (a === '--accept-scripts' || a === '-y') args.acceptScripts = true;
     else if (a === '--kill-agents') args.killAgents = true;
     else if (a === '--retention-days') args.retentionDays = Number(argv[++i]);
@@ -116,6 +122,11 @@ async function start(args: Args) {
   await core.start();
   const web = webDistDir();
   if (!web) logger.warn('web UI not found next to the CLI; only the API will be served');
+  // Anything reachable from other machines gets a token (the API can run shell scripts and agents).
+  const loopback = ['127.0.0.1', 'localhost', '::1'].includes(args.host);
+  const token = args.token ?? (loopback ? null : randomBytes(24).toString('base64url'));
+  if (!loopback && !args.token)
+    logger.warn(`binding to ${args.host}: generated an access token (set --token or AK_TOKEN to choose one)`);
   const server = await startServer({
     core,
     port: args.port,
@@ -123,10 +134,14 @@ async function start(args: Args) {
     logger,
     webDistDir: web,
     findFreePort: true,
+    version: VERSION,
+    token: token ?? undefined,
   });
   if (server.port !== args.port) logger.info(`port ${args.port} was busy, using ${server.port}`);
-  logger.info(`agent-kanban ${VERSION} listening at ${server.url}  (db: ${defaultPaths().dbPath})`);
-  if (args.open) openBrowser(server.url);
+  // The UI reads ?token= once, stores it and strips it from the address bar.
+  const url = token ? `${server.url}/?token=${token}` : server.url;
+  logger.info(`agent-kanban ${VERSION} listening at ${url}  (db: ${defaultPaths().dbPath})`);
+  if (args.open) openBrowser(url);
   let stopping = false;
   const shutdown = async (signal: string) => {
     if (stopping) return;
@@ -282,6 +297,7 @@ function help() {
 
 Usage:
   agent-kanban [start] [--port 3737] [--no-open] [--host 127.0.0.1]   start the server and open the UI
+      --token T              require this API token (generated automatically when --host is not loopback)
       --kill-agents          terminate running agents on exit (default: they keep running and are re-attached)
       --retention-days N     delete event streams of DONE runs older than N days (default 30, 0 = never)
   agent-kanban add [path] [--accept-scripts|-y]                      register a git repo as a project (default: .)
@@ -290,7 +306,7 @@ Usage:
   agent-kanban --version | --help
 
 Environment: GITHUB_TOKEN / GH_TOKEN, GITLAB_TOKEN (issue import, status sync, PR/MR), ANTHROPIC_* / CLAUDE_CODE_* (forwarded to Claude Code),
-             XDG_CONFIG_HOME / XDG_CACHE_HOME (db, worktrees and logs location), LOG_LEVEL, PORT.
+             XDG_CONFIG_HOME / XDG_CACHE_HOME (db, worktrees and logs location), LOG_LEVEL, PORT, AK_TOKEN.
 `);
 }
 

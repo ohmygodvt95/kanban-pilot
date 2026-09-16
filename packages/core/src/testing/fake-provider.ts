@@ -1,6 +1,7 @@
 import type { Column } from '@agent-kanban/shared';
 import type {
   CreateIssueInput,
+  ExternalComment,
   ExternalIssue,
   IssueProvider,
   ProviderConfig,
@@ -90,6 +91,27 @@ export class FakeIssueProvider implements IssueProvider {
       ],
     };
   }
+  /** Remote comments per issue, served by listComments (tests push into it). */
+  readonly remoteComments = new Map<string, ExternalComment[]>();
+  readonly updates: { ref: string; patch: { title?: string; body?: string } }[] = [];
+  async updateIssue(ref: string, patch: { title?: string; body?: string }): Promise<ExternalIssue> {
+    this.updates.push({ ref, patch });
+    const issue = this.issues.find((i) => i.externalId === ref);
+    if (!issue) throw new Error(`no issue ${ref}`);
+    if (patch.title !== undefined) issue.title = patch.title;
+    if (patch.body !== undefined) issue.body = patch.body;
+    issue.updatedAt = new Date(Date.now() + this.updates.length).toISOString();
+    return { ...issue };
+  }
+  async listComments(ref: string): Promise<ExternalComment[]> {
+    return this.remoteComments.get(ref) ?? [];
+  }
+  async searchUsers(query: string) {
+    return [
+      { id: 'alice', name: 'Alice' },
+      { id: 'bob', name: 'Bob' },
+    ].filter((u) => u.name.toLowerCase().includes(query.toLowerCase()));
+  }
   readonly created: CreateIssueInput[] = [];
   async createIssue(input: CreateIssueInput): Promise<ExternalIssue> {
     this.created.push(input);
@@ -100,6 +122,7 @@ export class FakeIssueProvider implements IssueProvider {
       body: input.body,
       labels: input.labels ?? [],
       status: 'Backlog',
+      updatedAt: new Date().toISOString(),
     };
     this.issues.push(issue);
     return issue;

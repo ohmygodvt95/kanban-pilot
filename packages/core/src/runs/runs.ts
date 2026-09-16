@@ -7,6 +7,7 @@ import {
   type Task,
 } from '@agent-kanban/shared';
 import type { CoreContext } from '../context.js';
+import { CoreError } from '../util/errors.js';
 
 export interface CreateRunInput {
   task: Task;
@@ -48,8 +49,36 @@ export interface RunTestsJobPayload {
 export class RunService {
   constructor(private readonly ctx: CoreContext) {}
 
+  /**
+   * Refuse new runs once the project's daily/weekly spending cap is reached
+   * (CONFLICT, code surfaced to the UI as a 409). Spend counts every run kind.
+   */
+  async assertBudget(projectId: string): Promise<void> {
+    const project = await this.ctx.store.getProject(projectId);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    if (project.daily_budget_usd != null) {
+      const spent = await this.ctx.store.spentSince(projectId, today.toISOString());
+      if (spent >= project.daily_budget_usd)
+        throw new CoreError(
+          'CONFLICT',
+          `daily budget reached ($${spent.toFixed(2)} of $${project.daily_budget_usd.toFixed(2)} today); raise it in Settings or wait for tomorrow`,
+        );
+    }
+    if (project.weekly_budget_usd != null) {
+      const week = new Date(today.getTime() - 6 * 86_400_000);
+      const spent = await this.ctx.store.spentSince(projectId, week.toISOString());
+      if (spent >= project.weekly_budget_usd)
+        throw new CoreError(
+          'CONFLICT',
+          `weekly budget reached ($${spent.toFixed(2)} of $${project.weekly_budget_usd.toFixed(2)} in 7 days); raise it in Settings`,
+        );
+    }
+  }
+
   /** Insert a queued run and enqueue the job that will execute it. */
   async create(input: CreateRunInput): Promise<Run> {
+    await this.assertBudget(input.task.project_id);
     const run = await this.ctx.store.insertRun({
       task_id: input.task.id,
       attempt_id: input.attempt?.id ?? null,

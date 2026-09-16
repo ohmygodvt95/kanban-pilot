@@ -1,6 +1,20 @@
 import type { Column, CreateMeta, RemoteField, TaskKind, TaskPriority } from '@agent-kanban/shared';
-import type { ExternalIssue, IssueProvider, ProviderConfig, ProviderModule, SyncContext } from './types.js';
-import { type CreateIssueInput, classifyLabels, HttpError, jsonRequest } from './types.js';
+import type {
+  ExternalComment,
+  ExternalIssue,
+  IssueProvider,
+  ProviderConfig,
+  ProviderModule,
+  RemoteUser,
+  SyncContext,
+} from './types.js';
+import {
+  type CreateIssueInput,
+  classifyLabels,
+  HttpError,
+  jsonRequest,
+  OWN_COMMENT_PREFIX,
+} from './types.js';
 
 /**
  * Jira Server / Data Center 8.x (self-hosted) over REST API v2. Two auth modes:
@@ -121,6 +135,7 @@ class JiraProvider implements IssueProvider {
       status: f.status?.name ?? null,
       kind,
       priority,
+      updatedAt: f.updated ?? null,
     };
   }
 
@@ -141,7 +156,7 @@ class JiraProvider implements IssueProvider {
       body: JSON.stringify({
         jql,
         maxResults: 50,
-        fields: ['summary', 'description', 'labels', 'status', 'priority', 'issuetype'],
+        fields: ['summary', 'description', 'labels', 'status', 'priority', 'issuetype', 'updated'],
       }),
     });
     return res.issues.map((i) => this.toIssue(i));
@@ -150,7 +165,7 @@ class JiraProvider implements IssueProvider {
   async getIssue(externalId: string): Promise<ExternalIssue> {
     return this.toIssue(
       await this.request<JiraIssue>(
-        `/issue/${encodeURIComponent(externalId)}?fields=summary,description,labels,status,priority,issuetype`,
+        `/issue/${encodeURIComponent(externalId)}?fields=summary,description,labels,status,priority,issuetype,updated`,
       ),
     );
   }
@@ -195,6 +210,45 @@ class JiraProvider implements IssueProvider {
     });
   }
 
+  async updateIssue(externalId: string, patch: { title?: string; body?: string }): Promise<ExternalIssue> {
+    const fields: Record<string, unknown> = {};
+    if (patch.title !== undefined) fields.summary = patch.title;
+    if (patch.body !== undefined) fields.description = markdownToJiraWiki(patch.body);
+    if (Object.keys(fields).length)
+      await this.request(`/issue/${encodeURIComponent(externalId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ fields }),
+      });
+    return this.getIssue(externalId);
+  }
+
+  async listComments(externalId: string): Promise<ExternalComment[]> {
+    const res = await this.request<{
+      comments: {
+        id: string;
+        body: string;
+        created: string;
+        author?: { displayName?: string; name?: string };
+      }[];
+    }>(`/issue/${encodeURIComponent(externalId)}/comment`);
+    return res.comments
+      .filter((c) => !c.body.startsWith(OWN_COMMENT_PREFIX))
+      .map((c) => ({
+        externalId: c.id,
+        author: c.author?.displayName ?? c.author?.name ?? 'unknown',
+        body: jiraWikiToMarkdown(c.body),
+        createdAt: c.created,
+      }));
+  }
+
+  /** Jira Server user search (`username` matches name, display name and email). */
+  async searchUsers(query: string): Promise<RemoteUser[]> {
+    const users = await this.request<{ name: string; displayName?: string; emailAddress?: string }[]>(
+      `/user/search?username=${encodeURIComponent(query || '.')}&maxResults=20`,
+    );
+    return users.map((u) => ({ id: u.name, name: u.displayName ?? u.name, email: u.emailAddress ?? null }));
+  }
+
   /** Issue types of the project with their fields (`createmeta`, expanded). */
   async createMeta(): Promise<CreateMeta> {
     const meta = await this.request<{ projects: { issuetypes: JiraIssueType[] }[] }>(
@@ -222,6 +276,8 @@ class JiraProvider implements IssueProvider {
     else if (schema.type === 'number') type = 'number';
     else if (schema.type === 'date' || schema.type === 'datetime') type = 'date';
     else if (schema.type === 'user') type = 'user';
+    else if (schema.type === 'option-with-child' || schema.custom?.endsWith(':cascadingselect'))
+      type = 'cascading';
     else if (schema.type === 'array') type = schema.items === 'string' ? 'labels' : 'multiselect';
     else if (f.allowedValues?.length) type = 'select';
     if (key === 'summary') type = 'string';
@@ -229,6 +285,14 @@ class JiraProvider implements IssueProvider {
     const allowed = f.allowedValues?.map((v) => ({
       id: String(v.id ?? v.name ?? v.value),
       name: String(v.name ?? v.value ?? v.id),
+      ...(v.children?.length
+        ? {
+            children: v.children.map((c) => ({
+              id: String(c.id ?? c.value),
+              name: String(c.value ?? c.name ?? c.id),
+            })),
+          }
+        : {}),
     }));
     return {
       key,
@@ -259,6 +323,12 @@ class JiraProvider implements IssueProvider {
               .split(',')
               .map((v) => v.trim())
               .filter(Boolean);
+      case 'cascading': {
+        // "parent/child", or {id, child: {id}} straight from the UI
+        if (typeof value === 'object') return value;
+        const [parent, child] = String(value).split('/');
+        return child ? { id: parent, child: { id: child } } : { id: parent };
+      }
       case 'user':
         return typeof value === 'object' ? value : { name: String(value) };
       case 'number':
@@ -356,7 +426,12 @@ interface JiraFieldMeta {
   required?: boolean;
   hasDefaultValue?: boolean;
   schema?: { type?: string; items?: string; custom?: string };
-  allowedValues?: { id?: string | number; name?: string; value?: string }[];
+  allowedValues?: {
+    id?: string | number;
+    name?: string;
+    value?: string;
+    children?: { id?: string | number; value?: string; name?: string }[];
+  }[];
 }
 
 interface JiraIssueType {
@@ -375,6 +450,7 @@ interface JiraIssue {
     status?: { name: string };
     priority?: { name: string };
     issuetype?: { name: string };
+    updated?: string;
   };
 }
 

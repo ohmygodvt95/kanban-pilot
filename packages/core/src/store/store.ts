@@ -5,6 +5,7 @@ import type {
   Comment,
   Job,
   Project,
+  ProjectCosts,
   RefinementQuestion,
   Run,
   RunEvent,
@@ -12,7 +13,8 @@ import type {
   Substate,
   Task,
 } from '@agent-kanban/shared';
-import { and, asc, count, desc, eq, gt, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import type { SQLiteTable } from 'drizzle-orm/sqlite-core';
 import type { Database } from '../db/client.js';
 import {
   attachments,
@@ -128,11 +130,16 @@ export class Store {
     return map;
   }
 
-  async listTasks(projectId: string): Promise<Task[]> {
+  /** Tasks of a project; soft-deleted rows are hidden unless `includeDeleted`. */
+  async listTasks(projectId: string, opts: { includeDeleted?: boolean } = {}): Promise<Task[]> {
     const rows = await this.db
       .select()
       .from(tasks)
-      .where(eq(tasks.project_id, projectId))
+      .where(
+        opts.includeDeleted
+          ? eq(tasks.project_id, projectId)
+          : and(eq(tasks.project_id, projectId), isNull(tasks.deleted_at)),
+      )
       .orderBy(asc(tasks.position), asc(tasks.created_at));
     const agg = await this.taskAggregates(rows.map((r) => r.id));
     return rows.map((r) => toTask(r, agg.get(r.id)));
@@ -184,6 +191,94 @@ export class Store {
     const task = await this.getTask(id);
     await this.db.delete(tasks).where(eq(tasks.id, id));
     this.events.emit('task.deleted', { project_id: task.project_id, task_id: id });
+  }
+
+  /** Hide a task (restorable with `restoreTasks`); the board sees it as deleted. */
+  async softDeleteTask(id: string): Promise<void> {
+    const task = await this.getTask(id);
+    await this.db.update(tasks).set({ deleted_at: nowIso() }).where(eq(tasks.id, id));
+    this.events.emit('task.deleted', { project_id: task.project_id, task_id: id });
+  }
+
+  /** Bring soft-deleted tasks of a project back; returns the restored tasks. */
+  async restoreTasks(projectId: string, ids: string[]): Promise<Task[]> {
+    if (!ids.length) return [];
+    await this.db
+      .update(tasks)
+      .set({ deleted_at: null, updated_at: nowIso() })
+      .where(and(eq(tasks.project_id, projectId), inArray(tasks.id, ids)));
+    const restored: Task[] = [];
+    for (const id of ids) {
+      const t = await this.findTask(id);
+      if (!t || t.project_id !== projectId) continue;
+      restored.push(t);
+      this.events.emit('task.updated', { project_id: projectId, task: t });
+    }
+    return restored;
+  }
+
+  /** Permanently remove soft-deleted tasks older than `olderThanMs`. */
+  async purgeDeletedTasks(olderThanMs: number): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanMs).toISOString();
+    const rows = await this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(sql`${tasks.deleted_at} IS NOT NULL`, lte(tasks.deleted_at, cutoff)));
+    if (!rows.length) return 0;
+    await this.db.delete(tasks).where(
+      inArray(
+        tasks.id,
+        rows.map((r) => r.id),
+      ),
+    );
+    return rows.length;
+  }
+
+  /** Cost of every run of the project that started at or after `sinceIso`. */
+  async spentSince(projectId: string, sinceIso: string): Promise<number> {
+    const [row] = await this.db
+      .select({ total: sql<number | null>`sum(${runs.cost_usd})` })
+      .from(runs)
+      .innerJoin(tasks, eq(runs.task_id, tasks.id))
+      .where(and(eq(tasks.project_id, projectId), gte(runs.started_at, sinceIso)));
+    return Number(row?.total ?? 0);
+  }
+
+  /** Spend per day (UTC) for the last `days` days, oldest first, plus totals. */
+  async projectCosts(projectId: string, days = 14): Promise<ProjectCosts> {
+    const since = new Date(Date.now() - (days - 1) * 86_400_000);
+    since.setUTCHours(0, 0, 0, 0);
+    const rows = await this.db
+      .select({
+        day: sql<string>`substr(${runs.started_at}, 1, 10)`,
+        usd: sql<number | null>`sum(${runs.cost_usd})`,
+        n: count(),
+      })
+      .from(runs)
+      .innerJoin(tasks, eq(runs.task_id, tasks.id))
+      .where(and(eq(tasks.project_id, projectId), gte(runs.started_at, since.toISOString())))
+      .groupBy(sql`substr(${runs.started_at}, 1, 10)`);
+    const byDay = new Map(rows.map((r) => [r.day, { usd: Number(r.usd ?? 0), runs: r.n }]));
+    const out: ProjectCosts['days'] = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(since.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+      const v = byDay.get(d);
+      out.push({ day: d, usd: v?.usd ?? 0, runs: v?.runs ?? 0 });
+    }
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const week = new Date(today.getTime() - 6 * 86_400_000);
+    const [total] = await this.db
+      .select({ total: sql<number | null>`sum(${runs.cost_usd})` })
+      .from(runs)
+      .innerJoin(tasks, eq(runs.task_id, tasks.id))
+      .where(eq(tasks.project_id, projectId));
+    return {
+      days: out,
+      today_usd: await this.spentSince(projectId, today.toISOString()),
+      week_usd: await this.spentSince(projectId, week.toISOString()),
+      total_usd: Number(total?.total ?? 0),
+    };
   }
 
   // ---- attempts -------------------------------------------------------------
@@ -473,6 +568,28 @@ export class Store {
     );
   }
 
+  /**
+   * Insert a comment imported from the tracker; duplicates (same task + external id)
+   * are ignored. Returns the comment when it was new.
+   */
+  async insertTrackerComment(values: {
+    task_id: string;
+    external_id: string;
+    author: string;
+    body: string;
+    created_at: string;
+  }): Promise<Comment | null> {
+    const dup = await this.db.query.comments.findFirst({
+      where: and(eq(comments.task_id, values.task_id), eq(comments.external_id, values.external_id)),
+    });
+    if (dup) return null;
+    const row = { ...values, id: newId(), kind: 'tracker' as const };
+    await this.db.insert(comments).values(row).onConflictDoNothing();
+    const c = await this.findComment(row.id);
+    if (c) await this.touchTask(values.task_id); // task.updated → the drawer refetches comments
+    return c;
+  }
+
   async insertComment(values: Omit<typeof comments.$inferInsert, 'id' | 'created_at'>): Promise<Comment> {
     const row = { ...values, id: newId(), created_at: nowIso() };
     await this.db.insert(comments).values(row);
@@ -654,6 +771,86 @@ export class Store {
 
   // ---- helpers --------------------------------------------------------------
   /** Re-emit a task (e.g. after comments changed) without modifying columns. */
+  /** Runs of every task of a project (for disk accounting). */
+  async listProjectRuns(projectId: string): Promise<Run[]> {
+    const rows = await this.db
+      .select({ run: runs })
+      .from(runs)
+      .innerJoin(tasks, eq(runs.task_id, tasks.id))
+      .where(eq(tasks.project_id, projectId));
+    return rows.map((r) => toRun(r.run));
+  }
+
+  // ---- backup ---------------------------------------------------------------
+  /** Raw rows of every table, in foreign-key order (jobs excluded: they are transient). */
+  async dumpAll(opts: { events?: boolean } = {}): Promise<Record<string, unknown[]>> {
+    const dump: Record<string, unknown[]> = {
+      projects: await this.db.select().from(projects),
+      tasks: await this.db.select().from(tasks),
+      attempts: await this.db.select().from(attempts),
+      runs: await this.db.select().from(runs),
+      comments: await this.db.select().from(comments),
+      attachments: await this.db.select().from(attachments),
+      refinement_questions: await this.db.select().from(refinementQuestions),
+      integrations: await this.db.select().from(integrations),
+    };
+    if (opts.events !== false) dump.run_events = await this.db.select().from(runEvents);
+    return dump;
+  }
+
+  /**
+   * Insert dumped rows, skipping ids that already exist (a merge, never an
+   * overwrite). Returns inserted counts per table.
+   */
+  async importDump(dump: Record<string, unknown[]>): Promise<Record<string, number>> {
+    const order: [
+      string,
+      (
+        | typeof projects
+        | typeof tasks
+        | typeof attempts
+        | typeof runs
+        | typeof comments
+        | typeof attachments
+        | typeof refinementQuestions
+        | typeof integrations
+        | typeof runEvents
+      ),
+    ][] = [
+      ['projects', projects],
+      ['tasks', tasks],
+      ['attempts', attempts],
+      ['runs', runs],
+      ['run_events', runEvents],
+      ['comments', comments],
+      ['attachments', attachments],
+      ['refinement_questions', refinementQuestions],
+      ['integrations', integrations],
+    ];
+    const counts: Record<string, number> = {};
+    for (const [name, table] of order) {
+      const rows = (dump[name] ?? []) as Record<string, unknown>[];
+      let n = 0;
+      for (let i = 0; i < rows.length; i += 200) {
+        const chunk = rows.slice(i, i + 200);
+        const before = await this.countRows(table);
+        // one loop over heterogeneous tables: the rows were dumped from the same table shape
+        await this.db
+          .insert(table as SQLiteTable)
+          .values(chunk as never)
+          .onConflictDoNothing();
+        n += (await this.countRows(table)) - before;
+      }
+      counts[name] = n;
+    }
+    return counts;
+  }
+
+  private async countRows(table: SQLiteTable): Promise<number> {
+    const [row] = await this.db.select({ n: count() }).from(table);
+    return row?.n ?? 0;
+  }
+
   async touchTask(id: string): Promise<Task> {
     return this.updateTask(id, {});
   }

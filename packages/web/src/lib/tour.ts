@@ -167,13 +167,71 @@ const PROJECTS: Copy = {
   ],
 };
 
+const TASK: Copy = {
+  en: [
+    {
+      target: ['task-header'],
+      title: 'The task at a glance',
+      body: 'Column, state, executor and cost live here. Edit the title or description inline; edits on a linked issue are pushed to the tracker.',
+    },
+    {
+      target: ['task-actions'],
+      title: 'Actions follow the state',
+      body: 'Start, kill or restart the agent, update the worktree from the base branch, run the tests, merge or open a pull request — only what makes sense right now is offered.',
+    },
+    {
+      target: ['tab-chat'],
+      title: 'Chat with the agent',
+      body: 'Answer the planner’s questions, send feedback while the agent works or after a review (it resumes its session), paste screenshots. Comments from the tracker show up here too.',
+    },
+    {
+      target: ['tab-diff'],
+      title: 'Review the diff',
+      body: 'Every change of the current attempt against the base branch, unified or split. Leave line comments that become feedback.',
+    },
+    {
+      target: ['tab-activity'],
+      title: 'Activity and logs',
+      body: 'Every run with its live log, cost and session id. Tests has the output of the project test script for the attempt.',
+    },
+  ],
+  vi: [
+    {
+      target: ['task-header'],
+      title: 'Tổng quan task',
+      body: 'Cột, trạng thái, executor và chi phí ở đây. Sửa tiêu đề hay mô tả ngay tại chỗ; task đã liên kết issue thì sửa sẽ đẩy lên tracker.',
+    },
+    {
+      target: ['task-actions'],
+      title: 'Hành động theo trạng thái',
+      body: 'Chạy, dừng hay chạy lại agent, cập nhật worktree từ base branch, chạy test, merge hoặc mở pull request — chỉ hiện những gì hợp lý ở thời điểm này.',
+    },
+    {
+      target: ['tab-chat'],
+      title: 'Chat với agent',
+      body: 'Trả lời câu hỏi của planner, gửi feedback khi agent đang làm hoặc sau review (agent tiếp tục đúng session), dán ảnh chụp màn hình. Comment từ tracker cũng hiện ở đây.',
+    },
+    {
+      target: ['tab-diff'],
+      title: 'Xem diff',
+      body: 'Mọi thay đổi của attempt hiện tại so với base branch, dạng unified hoặc split. Comment theo dòng sẽ thành feedback.',
+    },
+    {
+      target: ['tab-activity'],
+      title: 'Hoạt động và log',
+      body: 'Từng run với log trực tiếp, chi phí và session id. Tab Tests có kết quả test script của project cho attempt này.',
+    },
+  ],
+};
+
 export const TOURS = {
   board: BOARD,
   projects: PROJECTS,
+  task: TASK,
 } as const;
 
 export type TourId = keyof typeof TOURS;
 
-export function tourSteps(id: TourId): TourStep[] {
-  return TOURS[id][tourLanguage()];
+export function tourSteps(id: TourId, lang: 'vi' | 'en' = tourLanguage()): TourStep[] {
+  return TOURS[id][lang];
 }

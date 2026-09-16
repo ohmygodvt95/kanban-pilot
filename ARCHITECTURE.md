@@ -86,6 +86,21 @@ feedback; refine/chat: full context) and re-points consumed comments to it. `run
   `CONFIRM_REQUIRED` listing the missing required fields (the UI renders them as a form and retries); on success
   the task gets `source_*` set and is synced like an imported one. `push_on_todo` runs the same code best-effort
   on the backlog → todo transition and reports missing fields in `last_error`.
+- **Two-way issue sync**: `IssueService.pullUpdates()` runs inside every poll: for each linked, non-done task whose
+  remote `updatedAt` differs from `tasks.source_updated_at` it copies title/body and imports new human comments
+  (`comments.external_id` dedupes, `OWN_COMMENT_PREFIX` filters our own status comments). Local edits go the other
+  way through `pushText()` → `provider.updateIssue()`, which advances the watermark so the next poll is a no-op.
+- **Soft delete**: "Clear all tasks" sets `tasks.deleted_at` (active worktrees are discarded first, the task falls
+  back to TODO); `Store.listTasks()` hides such rows, `TaskService.restore()` clears the stamp, and the poll ticker
+  purges rows older than `undoWindowMs` (10 min). Import treats soft-deleted rows as still imported.
+- **Budget guard**: `RunService.create()` calls `assertBudget()` — the sum of `runs.cost_usd` since UTC midnight /
+  7 days ago versus `projects.daily_budget_usd` / `weekly_budget_usd` — before inserting any run.
+- **Maintenance / backup**: `MaintenanceService` reports per-day costs, the disk footprint under
+  `worktreesRoot/<project>` and `logsRoot/<run>`, and removes what no active attempt or unfinished task owns.
+  `BackupService` dumps every table (jobs excluded) and re-imports with `onConflictDoNothing`.
+- **Auth**: the server accepts an optional token (`requireToken` middleware on `/api/*` except `/api/health`);
+  the CLI generates one whenever the bind address is not loopback. The UI keeps it in localStorage and sends
+  `Authorization: Bearer`, or `?token=` for EventSource.
 - **Priority queue**: `jobs.priority` is derived from the task priority; `Store.queuedJobs()` orders by priority
   then age. The runner also counts locally claimed `run_agent` jobs so `max_concurrent_runs` cannot be
   over-subscribed between ticks.

@@ -1,6 +1,16 @@
 import type { Comment, NormalizedEvent, Project, Run, TaskDetail } from '@agent-kanban/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Bot, ChevronDown, ChevronRight, CornerDownLeft, ImagePlus, Send, User, X } from 'lucide-react';
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  CornerDownLeft,
+  ImagePlus,
+  Link2,
+  Send,
+  User,
+  X,
+} from 'lucide-react';
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -301,6 +311,7 @@ function resolveImageSrc(src: string, attemptId: string | null): string | null {
 
 type Item =
   | { key: string; kind: 'user'; comments: Comment[]; at: string }
+  | { key: string; kind: 'tracker'; comment: Comment; at: string }
   | { key: string; kind: 'system'; text: ReactNode; detail?: string; at: string }
   | { key: string; kind: 'assistant'; run: Run; body: string | null; extra?: ReactNode; at: string };
 
@@ -388,6 +399,14 @@ function buildTimeline(task: TaskDetail): Item[] {
   );
   if (pending.length)
     items.push({ key: 'pending', kind: 'user', comments: pending, at: pending[0]?.created_at ?? '' });
+  // comments pulled from the issue tracker slot in by time (pending feedback stays last)
+  for (const c of task.comments.filter((c) => c.kind === 'tracker')) {
+    const item: Item = { key: `tr-${c.id}`, kind: 'tracker', comment: c, at: c.created_at };
+    const idx = items.findIndex((x) => x.key !== 'pending' && x.at > c.created_at);
+    const pendingIdx = items.findIndex((x) => x.key === 'pending');
+    const at = idx === -1 ? (pendingIdx === -1 ? items.length : pendingIdx) : idx;
+    items.splice(at, 0, item);
+  }
   return items;
 }
 
@@ -433,6 +452,23 @@ function AttachmentStrip({ attachments }: { attachments: Comment['attachments'] 
 }
 
 function TimelineItem({ item, attemptId }: { item: Item; attemptId: string | null }) {
+  if (item.kind === 'tracker') {
+    const c = item.comment;
+    return (
+      <div className="flex justify-start">
+        <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-sky-200 bg-sky-50 px-3.5 py-2 text-[13px] text-zinc-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-zinc-100">
+          <div className="mb-0.5 flex items-center gap-1.5 text-[10px] text-sky-700 dark:text-sky-300">
+            <Link2 size={11} />
+            <span className="font-medium">{c.author ?? 'tracker'}</span>
+            <span className="opacity-70">· from the issue tracker · {formatClock(c.created_at)}</span>
+          </div>
+          <div className="md">
+            <Markdown>{c.body}</Markdown>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (item.kind === 'system') {
     return (
       <div className="flex justify-center">

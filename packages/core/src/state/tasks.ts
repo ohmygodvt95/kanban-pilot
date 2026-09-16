@@ -83,6 +83,7 @@ export interface CreateTaskInput {
   priority?: Task['priority'];
   skip_refinement?: boolean;
   source_url?: string | null;
+  source_updated_at?: string | null;
   source_provider?: Task['source_provider'];
   source_external_id?: string | null;
 }
@@ -146,6 +147,7 @@ export class TaskService {
       source_url: input.source_url ?? null,
       source_provider: input.source_provider ?? null,
       source_external_id: input.source_external_id ?? null,
+      source_updated_at: input.source_updated_at ?? null,
     });
   }
 
@@ -167,7 +169,9 @@ export class TaskService {
     if (input.skip_refinement !== undefined) patch.skip_refinement = input.skip_refinement;
     if (input.position !== undefined) patch.position = input.position;
     if (input.source_url !== undefined) patch.source_url = input.source_url;
-    return this.store.updateTask(id, patch);
+    const updated = await this.store.updateTask(id, patch);
+    if (editsText && updated.source_external_id) await this.deps.issues().pushText(updated, patch);
+    return updated;
   }
 
   async delete(id: string): Promise<void> {
@@ -183,18 +187,21 @@ export class TaskService {
   }
 
   /**
-   * Delete every task of a project regardless of its origin (manual, imported…).
+   * Clear every task of a project regardless of its origin (manual, imported…).
    * Tasks with a queued/running agent are skipped unless `force`, in which case
-   * their runs are cancelled first. Active worktrees are discarded; linked issues
-   * on the tracker are left untouched.
+   * their runs are cancelled first. Active worktrees are discarded (irreversible);
+   * the task rows themselves are only soft-deleted so `restore()` can undo the
+   * clear for a while (see `Store.purgeDeletedTasks`). Linked issues on the
+   * tracker are left untouched.
    */
   async deleteAll(
     projectId: string,
     opts: { force?: boolean } = {},
-  ): Promise<{ deleted: number; skipped: number }> {
+  ): Promise<{ deleted: number; skipped: number; ids: string[] }> {
     await this.store.getProject(projectId);
     let deleted = 0;
     let skipped = 0;
+    const ids: string[] = [];
     for (const task of await this.store.listTasks(projectId)) {
       if (await this.hasActiveRun(task.id)) {
         if (!opts.force) {
@@ -207,14 +214,41 @@ export class TaskService {
           await new Promise((r) => setTimeout(r, 250));
       }
       try {
-        await this.delete(task.id);
+        await this.softDelete(task);
+        ids.push(task.id);
         deleted++;
       } catch (err) {
         this.ctx.logger.warn({ task: task.id, err: errorMessage(err) }, 'bulk delete: task skipped');
         skipped++;
       }
     }
-    return { deleted, skipped };
+    return { deleted, skipped, ids };
+  }
+
+  /** Discard the active worktree (if any) and hide the task. */
+  private async softDelete(task: Task): Promise<void> {
+    if (await this.hasActiveRun(task.id))
+      throw new CoreError('CONFLICT', 'cannot delete a task while a run is active');
+    const attempt = await this.activeAttempt(task);
+    if (attempt) {
+      const project = await this.store.getProject(task.project_id);
+      await this.deps.attempts.discard(attempt, project);
+      // the worktree is gone: back to TODO so a restore does not resurrect a dangling attempt
+      await this.store.setTaskState(task.id, 'todo', 'ready', {
+        current_attempt_id: null,
+        last_error: 'attempt discarded when the project was cleared',
+      });
+    }
+    await this.store.softDeleteTask(task.id);
+  }
+
+  /** Undo a bulk clear: bring the listed soft-deleted tasks back onto the board. */
+  async restore(projectId: string, ids: string[]): Promise<Task[]> {
+    await this.store.getProject(projectId);
+    const restored = await this.store.restoreTasks(projectId, ids);
+    // restored TODO tasks obey auto-start like any other arrival in TODO
+    for (const t of restored) if (t.column === 'todo') await this.maybeAutoStart(t);
+    return restored;
   }
 
   async clone(id: string): Promise<Task> {
@@ -426,10 +460,35 @@ export class TaskService {
       source_provider: link.row.provider,
       source_external_id: issue.externalId,
       source_url: issue.url,
+      source_updated_at: issue.updatedAt ?? null,
       last_error: null,
     });
     void this.deps.issues().syncNow(linked);
     return linked;
+  }
+
+  /**
+   * Push several unlinked tasks with one shared set of field values. Stops at the
+   * first CONFIRM_REQUIRED (the caller collects the fields and retries); other
+   * failures are recorded per task and the loop continues.
+   */
+  async pushMany(
+    projectId: string,
+    ids: string[],
+    input: { issueTypeId?: string | null; fields?: Record<string, unknown> } = {},
+  ): Promise<{ pushed: Task[]; failed: { id: string; error: string }[] }> {
+    await this.store.getProject(projectId);
+    const pushed: Task[] = [];
+    const failed: { id: string; error: string }[] = [];
+    for (const id of ids) {
+      try {
+        pushed.push(await this.pushToTracker(id, input));
+      } catch (err) {
+        if (err instanceof CoreError && err.code === 'CONFIRM_REQUIRED') throw err;
+        failed.push({ id, error: errorMessage(err) });
+      }
+    }
+    return { pushed, failed };
   }
 
   /** Imported issues already marked "ready" on the tracker skip refinement and land in TODO. */

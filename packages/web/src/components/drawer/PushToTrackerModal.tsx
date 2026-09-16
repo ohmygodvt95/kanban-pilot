@@ -4,9 +4,9 @@
  * from their remote type: selects for allowed values, text/number/date otherwise.
  */
 import type { RemoteField, Task } from '@agent-kanban/shared';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Send } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ApiError, api } from '../../api/client';
 import { upsertTask } from '../../api/queries';
 import { Button, Field, inputClass, Modal } from '../ui';
@@ -86,6 +86,7 @@ export function PushToTrackerModal({
               field={f}
               value={values[f.key]}
               onChange={(v) => setValues((old) => ({ ...old, [f.key]: v }))}
+              projectId={task.project_id}
             />
           </Field>
         ))}
@@ -99,11 +100,53 @@ export function RemoteFieldInput({
   field,
   value,
   onChange,
+  projectId,
 }: {
   field: RemoteField;
   value: unknown;
   onChange: (v: unknown) => void;
+  /** Enables the user picker (tracker user search) for `user` fields. */
+  projectId?: string;
 }) {
+  if (field.type === 'cascading' && field.allowedValues?.length) {
+    const v = (value ?? {}) as { id?: string; child?: { id?: string } };
+    const parent = field.allowedValues.find((o) => o.id === v.id);
+    return (
+      <div className="grid gap-2 sm:grid-cols-2">
+        <select
+          className={inputClass}
+          value={v.id ?? ''}
+          onChange={(e) => onChange(e.target.value ? { id: e.target.value } : undefined)}
+        >
+          <option value="">— choose —</option>
+          {field.allowedValues.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </select>
+        <select
+          className={inputClass}
+          disabled={!parent?.children?.length}
+          value={v.child?.id ?? ''}
+          onChange={(e) =>
+            onChange({ id: v.id, ...(e.target.value ? { child: { id: e.target.value } } : {}) })
+          }
+        >
+          <option value="">— {parent?.children?.length ? 'choose' : 'no sub-option'} —</option>
+          {(parent?.children ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+  if (field.type === 'user' && projectId)
+    return (
+      <UserPicker projectId={projectId} value={typeof value === 'string' ? value : ''} onChange={onChange} />
+    );
   if (field.allowedValues?.length && (field.type === 'select' || field.type === 'multiselect')) {
     if (field.type === 'multiselect') {
       const selected = Array.isArray(value) ? (value as string[]) : [];
@@ -187,4 +230,70 @@ export function RemoteFieldInput({
       onChange={(e) => onChange(e.target.value)}
     />
   );
+}
+
+/** Autocomplete over the tracker's users; stores the user id/name the tracker expects. */
+function UserPicker({
+  projectId,
+  value,
+  onChange,
+}: {
+  projectId: string;
+  value: string;
+  onChange: (v: unknown) => void;
+}) {
+  const [query, setQuery] = useState(value);
+  const [open, setOpen] = useState(false);
+  const debounced = useDebounced(query, 250);
+  const users = useQuery({
+    queryKey: ['tracker-users', projectId, debounced],
+    queryFn: () => api.projects.searchUsers(projectId, debounced),
+    enabled: open && debounced.length > 0,
+    staleTime: 60_000,
+  });
+  return (
+    <div className="relative">
+      <input
+        className={inputClass}
+        placeholder="type a name…"
+        value={query}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          onChange(e.target.value); // free text is still accepted (exact username)
+        }}
+      />
+      {open && users.data?.length ? (
+        <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-md border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+          {users.data.map((u) => (
+            <li key={u.id}>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange(u.id);
+                  setQuery(u.name);
+                  setOpen(false);
+                }}
+              >
+                <span>{u.name}</span>
+                <span className="font-mono text-[10px] text-zinc-400">{u.id}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
 }

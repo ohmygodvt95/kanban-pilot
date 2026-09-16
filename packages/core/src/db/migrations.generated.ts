@@ -113,5 +113,19 @@ export const MIGRATIONS: EmbeddedMigration[] = [
       "ALTER TABLE `integrations` ADD `push_defaults` text DEFAULT '{\"issue_type_by_kind\":{},\"priority_map\":{},\"fields\":{}}' NOT NULL;",
       "ALTER TABLE `integrations` ADD `push_on_todo` integer DEFAULT false NOT NULL;"
     ]
+  },
+  {
+    "tag": "0009_red_imperial_guard",
+    "when": 1789567687547,
+    "hash": "b5ad1db918447061cc494d19623bbde7c4ddd542f93eb74d1cdf96fc53a2b262",
+    "sql": [
+      "ALTER TABLE `comments` ADD `external_id` text;",
+      "ALTER TABLE `comments` ADD `author` text;",
+      "CREATE UNIQUE INDEX `comments_task_external_unique` ON `comments` (`task_id`,`external_id`) WHERE external_id IS NOT NULL;",
+      "ALTER TABLE `projects` ADD `daily_budget_usd` real;",
+      "ALTER TABLE `projects` ADD `weekly_budget_usd` real;",
+      "ALTER TABLE `tasks` ADD `source_updated_at` text;",
+      "ALTER TABLE `tasks` ADD `deleted_at` text;"
+    ]
   }
 ];

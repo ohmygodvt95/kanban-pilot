@@ -36,6 +36,9 @@ export const projectSchema = z.object({
   model: nullableString,
   /** Hard cap in USD per run (Claude: --max-budget-usd); null = unlimited. */
   max_budget_usd: z.number().nullable(),
+  /** Spending caps across all runs of the project (null = unlimited). */
+  daily_budget_usd: z.number().nullable(),
+  weekly_budget_usd: z.number().nullable(),
   /** Language of the built-in prompt templates. */
   prompt_language: promptLanguageSchema,
   /** Optional overrides of the execute / followup prompt templates. */
@@ -77,6 +80,10 @@ export const taskSchema = z.object({
   source_provider: providerIdSchema.nullable(),
   source_external_id: nullableString,
   source_url: nullableString,
+  /** Remote `updated` watermark of the last title/body sync. */
+  source_updated_at: nullableString.optional(),
+  /** Set while the task sits in the undo window of a bulk clear. */
+  deleted_at: nullableString.optional(),
   created_at: isoDate,
   updated_at: isoDate,
   /** Computed: sum of cost_usd over all runs of the task. */
@@ -164,6 +171,8 @@ export const commentSchema = z.object({
   file_path: nullableString,
   line: z.number().int().nullable(),
   consumed_by_run_id: nullableString,
+  /** Display name of the author for comments imported from the tracker. */
+  author: nullableString.optional(),
   created_at: isoDate,
   /** Images attached to the comment (empty for most comments). */
   attachments: z.array(attachmentSchema),
@@ -232,6 +241,8 @@ export const externalIssueSchema = z.object({
   priority: taskPrioritySchema.nullable().optional(),
   /** Remote status name (workflow status or matching label). */
   status: z.string().nullable().optional(),
+  /** Last modification on the tracker (ISO), used for two-way sync. */
+  updatedAt: z.string().nullable().optional(),
   /** Set by GET /projects/:id/issues: already a task, and where the status map would put it. */
   imported: z.boolean().optional(),
   column: z.union([columnSchema, z.literal('skip')]).optional(),
@@ -296,8 +307,27 @@ export const remoteFieldSchema = z.object({
   key: z.string(),
   name: z.string(),
   required: z.boolean(),
-  type: z.enum(['string', 'text', 'number', 'date', 'select', 'multiselect', 'user', 'labels', 'unknown']),
-  allowedValues: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+  type: z.enum([
+    'string',
+    'text',
+    'number',
+    'date',
+    'select',
+    'multiselect',
+    'cascading',
+    'user',
+    'labels',
+    'unknown',
+  ]),
+  allowedValues: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        children: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+      }),
+    )
+    .optional(),
   /** true when the tracker fills the value itself (reporter, project…) — never asked from the user. */
   hasDefault: z.boolean().optional(),
 });
@@ -313,6 +343,47 @@ export type RemoteIssueType = z.infer<typeof remoteIssueTypeSchema>;
 /** Create metadata of the linked tracker project (GET /projects/:id/integration/create-meta). */
 export const createMetaSchema = z.object({ issueTypes: z.array(remoteIssueTypeSchema) });
 export type CreateMeta = z.infer<typeof createMetaSchema>;
+
+/** A tracker user, for user-picker fields (GET /projects/:id/integration/users?q=). */
+export const remoteUserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: nullableString.optional(),
+});
+export type RemoteUser = z.infer<typeof remoteUserSchema>;
+
+/** Spend of a project per day (GET /projects/:id/costs). */
+export const costPointSchema = z.object({ day: z.string(), usd: z.number(), runs: z.number().int() });
+export const projectCostsSchema = z.object({
+  days: z.array(costPointSchema),
+  today_usd: z.number(),
+  week_usd: z.number(),
+  total_usd: z.number(),
+});
+export type ProjectCosts = z.infer<typeof projectCostsSchema>;
+
+/** Disk footprint of a project (GET /projects/:id/disk). */
+export const diskUsageSchema = z.object({
+  worktrees_bytes: z.number(),
+  logs_bytes: z.number(),
+  /** Worktrees/logs that belong to finished (done/discarded) work and can be removed. */
+  reclaimable_bytes: z.number(),
+  reclaimable_items: z.number().int(),
+});
+export type DiskUsage = z.infer<typeof diskUsageSchema>;
+
+/** GET /api/health */
+export const healthSchema = z.object({
+  ok: z.literal(true),
+  pid: z.number(),
+  activeRuns: z.array(z.string()),
+  version: z.string(),
+  /** Newest version on npm, when the daily check succeeded and it is newer. */
+  latest_version: nullableString.optional(),
+  /** true when the server requires a token (non-loopback bind). */
+  auth_required: z.boolean().optional(),
+});
+export type Health = z.infer<typeof healthSchema>;
 
 export const providerFieldSchema = z.object({
   key: z.enum(['base_url', 'project_ref', 'username', 'token', 'password', 'import_filter']),
