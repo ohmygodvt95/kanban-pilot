@@ -1,4 +1,10 @@
-import type { ExecutorId, Project, UpdateProjectInput } from '@agent-kanban/shared';
+import type {
+  DoneAction,
+  ExecutorId,
+  Project,
+  PromptLanguage,
+  UpdateProjectInput,
+} from '@agent-kanban/shared';
 import { EXECUTOR_IDS } from '@agent-kanban/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, Trash2 } from 'lucide-react';
@@ -75,7 +81,7 @@ function SettingsForm({ project }: { project: Project }) {
   const toast = useToast();
   const navigate = useNavigate();
   const [confirm, confirmNode] = useConfirm();
-  const _provider = useProvider(project.id);
+  const provider = useProvider(project.id);
   const [form, setForm] = useState<Form>(() => toForm(project));
   useEffect(() => setForm(toForm(project)), [project]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -187,6 +193,31 @@ function SettingsForm({ project }: { project: Project }) {
                 onChange={(e) => set('run_timeout_minutes', Number(e.target.value))}
               />
             </Field>
+            <Field
+              label="Model"
+              hint="Passed to the CLI (Claude: --model, e.g. sonnet / opus). Empty = CLI default. Tasks can override it."
+            >
+              <input
+                className={`${inputClass} font-mono`}
+                value={form.model}
+                onChange={(e) => set('model', e.target.value)}
+                placeholder="sonnet"
+              />
+            </Field>
+            <Field
+              label="Max budget per run (USD)"
+              hint="Claude: --max-budget-usd. The run stops when the cap is reached. Empty = unlimited."
+            >
+              <input
+                type="number"
+                min={0.1}
+                step={0.5}
+                className={inputClass}
+                value={form.max_budget_usd}
+                onChange={(e) => set('max_budget_usd', e.target.value)}
+                placeholder="5"
+              />
+            </Field>
           </div>
           <div className="mt-3">
             <ExecutorStatusRow projectId={project.id} />
@@ -235,8 +266,43 @@ function SettingsForm({ project }: { project: Project }) {
             <Switch
               checked={form.auto_done}
               onChange={(v) => set('auto_done', v)}
-              label="Auto-merge to Done when the test script passes (off by default)"
+              label="Auto-complete when the test script passes (off by default)"
             />
+            <Field
+              label="When a task is marked Done"
+              hint={
+                provider.data
+                  ? `Origin is hosted on ${provider.data.id} (${provider.data.projectRef}) — ${provider.data.ok ? 'pull requests are available' : provider.data.message}`
+                  : 'Pull requests need an origin remote on GitHub and GITHUB_TOKEN in the environment.'
+              }
+            >
+              <select
+                className={inputClass}
+                value={form.done_action}
+                onChange={(e) => set('done_action', e.target.value as DoneAction)}
+              >
+                <option value="merge">Merge the attempt branch into the base branch locally</option>
+                <option value="pr">Push the branch and open a pull request</option>
+              </select>
+            </Field>
+          </div>
+        </Card>
+
+        <Card title="Prompts">
+          <div className="grid gap-4">
+            <Field
+              label="Prompt language"
+              hint="Language of the built-in instructions sent to the agent (task descriptions are passed through unchanged)."
+            >
+              <select
+                className={inputClass}
+                value={form.prompt_language}
+                onChange={(e) => set('prompt_language', e.target.value as PromptLanguage)}
+              >
+                <option value="vi">Tiếng Việt</option>
+                <option value="en">English</option>
+              </select>
+            </Field>
             <Field
               label="Refinement prompt template"
               hint={
@@ -248,9 +314,44 @@ function SettingsForm({ project }: { project: Project }) {
               }
             >
               <textarea
-                className={`${inputClass} min-h-36 font-mono text-xs`}
+                className={`${inputClass} min-h-28 font-mono text-xs`}
                 value={form.refinement_prompt}
                 onChange={(e) => set('refinement_prompt', e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Execute prompt template"
+              hint={
+                <>
+                  Optional. Placeholders:{' '}
+                  <code className="font-mono">
+                    {
+                      '{{title}} {{description}} {{plan_section}} {{feedback_section}} {{worktree_notice}} {{constraints}}'
+                    }
+                  </code>
+                  .
+                </>
+              }
+            >
+              <textarea
+                className={`${inputClass} min-h-28 font-mono text-xs`}
+                value={form.execute_prompt}
+                onChange={(e) => set('execute_prompt', e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Followup prompt template"
+              hint={
+                <>
+                  Optional. Placeholder: <code className="font-mono">{'{{feedback}}'}</code> (numbered list of
+                  review comments).
+                </>
+              }
+            >
+              <textarea
+                className={`${inputClass} min-h-24 font-mono text-xs`}
+                value={form.followup_prompt}
+                onChange={(e) => set('followup_prompt', e.target.value)}
               />
             </Field>
           </div>
