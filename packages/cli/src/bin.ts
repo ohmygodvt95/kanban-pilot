@@ -215,7 +215,11 @@ async function doctor(args: Args) {
   const node = process.versions.node;
   const [major, minor] = node.split('.').map(Number);
   const nodeOk = (major ?? 0) > 22 || ((major ?? 0) === 22 && (minor ?? 0) >= 13);
-  checks.push({ name: 'node', ok: nodeOk, detail: `node ${node}${nodeOk ? '' : ' (need ≥ 22.13 for node:sqlite)'}` });
+  checks.push({
+    name: 'node',
+    ok: nodeOk,
+    detail: `node ${node}${nodeOk ? '' : ' (need ≥ 22.13 for node:sqlite)'}`,
+  });
   log(`${sym(nodeOk)} node ${node} ${nodeOk ? '' : '(need ≥ 22.13 for node:sqlite)'}`);
 
   try {
@@ -243,9 +247,8 @@ async function doctor(args: Args) {
   const registry = createDefaultRegistry();
   for (const adapter of Object.values(registry)) {
     const res = await adapter.check();
-    const detail = res.version && res.message
-      ? `${res.version} — ${res.message}`
-      : (res.version ?? res.message ?? '');
+    const detail =
+      res.version && res.message ? `${res.version} — ${res.message}` : (res.version ?? res.message ?? '');
     checks.push({ name: adapter.displayName, ok: res.ok, detail });
     log(
       `${sym(res.ok)} ${adapter.displayName}${res.version ? ` ${res.version}` : ''}${res.message ? ` — ${res.message}` : ''}`,
@@ -253,7 +256,9 @@ async function doctor(args: Args) {
   }
 
   const ghToken = !!(process.env.GITHUB_TOKEN || process.env.GH_TOKEN);
-  const ghDetail = ghToken ? 'set (issue import + pull requests enabled)' : 'not set (GitHub features disabled)';
+  const ghDetail = ghToken
+    ? 'set (issue import + pull requests enabled)'
+    : 'not set (GitHub features disabled)';
   checks.push({ name: 'GITHUB_TOKEN/GH_TOKEN', ok: ghToken, detail: ghDetail });
   log(`${ghToken ? '✓' : '·'} GITHUB_TOKEN/GH_TOKEN ${ghDetail}`);
 
