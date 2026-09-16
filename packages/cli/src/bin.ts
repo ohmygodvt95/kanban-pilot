@@ -33,6 +33,8 @@ interface Args {
   killAgents: boolean;
   /** Days to keep event streams of DONE runs (0 = forever). */
   retentionDays: number;
+  /** `doctor`: print checks as a JSON array instead of text lines. */
+  json: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -44,6 +46,7 @@ function parseArgs(argv: string[]): Args {
     acceptScripts: false,
     killAgents: false,
     retentionDays: Number(process.env.AK_RETENTION_DAYS ?? 30),
+    json: false,
   };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -56,6 +59,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--kill-agents') args.killAgents = true;
     else if (a === '--retention-days') args.retentionDays = Number(argv[++i]);
     else if (a.startsWith('--retention-days=')) args.retentionDays = Number(a.slice(17));
+    else if (a === '--json') args.json = true;
     else if (a === '-h' || a === '--help') args.command = 'help';
     else if (a === '-v' || a === '--version') args.command = 'version';
     else rest.push(a);
@@ -195,41 +199,76 @@ async function add(args: Args) {
   }
 }
 
-async function doctor() {
-  const ok = (b: boolean) => (b ? '✓' : '✗');
+interface DoctorCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+async function doctor(args: Args) {
+  const checks: DoctorCheck[] = [];
+  const sym = (b: boolean) => (b ? '✓' : '✗');
+  const log = (line: string) => {
+    if (!args.json) console.log(line);
+  };
+
   const node = process.versions.node;
   const [major, minor] = node.split('.').map(Number);
   const nodeOk = (major ?? 0) > 22 || ((major ?? 0) === 22 && (minor ?? 0) >= 13);
-  console.log(`${ok(nodeOk)} node ${node} ${nodeOk ? '' : '(need ≥ 22.13 for node:sqlite)'}`);
+  checks.push({ name: 'node', ok: nodeOk, detail: `node ${node}${nodeOk ? '' : ' (need ≥ 22.13 for node:sqlite)'}` });
+  log(`${sym(nodeOk)} node ${node} ${nodeOk ? '' : '(need ≥ 22.13 for node:sqlite)'}`);
+
   try {
     const { stdout } = await git(process.cwd(), ['--version']);
-    console.log(`✓ ${stdout.trim()}`);
+    const detail = stdout.trim();
+    checks.push({ name: 'git', ok: true, detail });
+    log(`✓ ${detail}`);
   } catch (err) {
-    console.log(`✗ git not found: ${(err as Error).message}`);
+    const detail = `git not found: ${(err as Error).message}`;
+    checks.push({ name: 'git', ok: false, detail });
+    log(`✗ ${detail}`);
   }
+
   try {
     const { DatabaseSync } = await import('node:sqlite');
     new DatabaseSync(':memory:').close();
-    console.log('✓ node:sqlite available');
+    checks.push({ name: 'node:sqlite', ok: true, detail: 'available' });
+    log('✓ node:sqlite available');
   } catch (err) {
-    console.log(`✗ node:sqlite unavailable: ${(err as Error).message}`);
+    const detail = `unavailable: ${(err as Error).message}`;
+    checks.push({ name: 'node:sqlite', ok: false, detail });
+    log(`✗ node:sqlite ${detail}`);
   }
+
   const registry = createDefaultRegistry();
   for (const adapter of Object.values(registry)) {
     const res = await adapter.check();
-    console.log(
-      `${ok(res.ok)} ${adapter.displayName}${res.version ? ` ${res.version}` : ''}${res.message ? ` — ${res.message}` : ''}`,
+    const detail = res.version && res.message
+      ? `${res.version} — ${res.message}`
+      : (res.version ?? res.message ?? '');
+    checks.push({ name: adapter.displayName, ok: res.ok, detail });
+    log(
+      `${sym(res.ok)} ${adapter.displayName}${res.version ? ` ${res.version}` : ''}${res.message ? ` — ${res.message}` : ''}`,
     );
   }
+
   const ghToken = !!(process.env.GITHUB_TOKEN || process.env.GH_TOKEN);
-  console.log(
-    `${ghToken ? '✓' : '·'} GITHUB_TOKEN/GH_TOKEN ${ghToken ? 'set (issue import + pull requests enabled)' : 'not set (GitHub features disabled)'}`,
-  );
+  const ghDetail = ghToken ? 'set (issue import + pull requests enabled)' : 'not set (GitHub features disabled)';
+  checks.push({ name: 'GITHUB_TOKEN/GH_TOKEN', ok: ghToken, detail: ghDetail });
+  log(`${ghToken ? '✓' : '·'} GITHUB_TOKEN/GH_TOKEN ${ghDetail}`);
+
   const cwdIsRepo = await isGitRepo(process.cwd());
-  console.log(`${cwdIsRepo ? '✓' : '·'} current directory ${cwdIsRepo ? 'is' : 'is not'} a git repository`);
+  const repoDetail = `current directory ${cwdIsRepo ? 'is' : 'is not'} a git repository`;
+  checks.push({ name: 'git repository', ok: cwdIsRepo, detail: repoDetail });
+  log(`${cwdIsRepo ? '✓' : '·'} ${repoDetail}`);
+
   const paths = defaultPaths();
-  console.log(`· database: ${paths.dbPath}`);
-  console.log(`· worktrees: ${paths.worktreesRoot}`);
+  checks.push({ name: 'database', ok: true, detail: paths.dbPath });
+  log(`· database: ${paths.dbPath}`);
+  checks.push({ name: 'worktrees', ok: true, detail: paths.worktreesRoot });
+  log(`· worktrees: ${paths.worktreesRoot}`);
+
+  if (args.json) console.log(JSON.stringify(checks, null, 2));
 }
 
 function help() {
@@ -240,7 +279,8 @@ Usage:
       --kill-agents          terminate running agents on exit (default: they keep running and are re-attached)
       --retention-days N     delete event streams of DONE runs older than N days (default 30, 0 = never)
   agent-kanban add [path] [--accept-scripts|-y]                      register a git repo as a project (default: .)
-  agent-kanban doctor                                                check node, git, sqlite, executor CLIs, GitHub token
+  agent-kanban doctor [--json]                                       check node, git, sqlite, executor CLIs, GitHub token
+      --json                 print the checks as a JSON array of { name, ok, detail } instead of text lines
   agent-kanban --version | --help
 
 Environment: GITHUB_TOKEN / GH_TOKEN (issue import, pull requests), ANTHROPIC_* / CLAUDE_CODE_* (forwarded to Claude Code),
@@ -257,7 +297,7 @@ switch (args.command) {
     await add(args);
     break;
   case 'doctor':
-    await doctor();
+    await doctor(args);
     break;
   case 'version':
     console.log(VERSION);

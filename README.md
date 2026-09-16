@@ -9,7 +9,7 @@ Leave feedback on the diff and send the card back: the agent resumes the same se
 ```
 npx agent-kanban            # start on http://127.0.0.1:3737 (next free port) and open the browser
 npx agent-kanban add .      # register the current git repo as a project
-npx agent-kanban doctor     # check node, git, node:sqlite and the executor CLIs
+npx agent-kanban doctor     # check node, git, node:sqlite and the executor CLIs (--json for machine-readable output)
 npx agent-kanban --port 4000 --no-open
 ```
 
