@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { drizzle, type SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy';
 import { schema } from './schema.js';
 
@@ -36,7 +37,10 @@ function toSqlParam(value: unknown): SQLInputValue {
  */
 export function openDatabase(path: string): DatabaseHandle {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const sqlite = new DatabaseSync(path);
+  // Loaded lazily so hosts can install a warning filter before Node emits the
+  // "SQLite is experimental" warning (which fires when the module is first loaded).
+  const { DatabaseSync: Db } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+  const sqlite: DatabaseSync = new Db(path);
   sqlite.exec('PRAGMA journal_mode = WAL;');
   sqlite.exec('PRAGMA foreign_keys = ON;');
   sqlite.exec('PRAGMA busy_timeout = 5000;');

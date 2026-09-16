@@ -16,7 +16,7 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "build": "node --experimental-strip-types scripts/build.ts",
+    "build": "tsx scripts/build.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
@@ -37,6 +37,7 @@
     "@agent-kanban/shared": "workspace:*",
     "@agent-kanban/web": "workspace:*",
     "@types/node": "22.20.3",
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "tsx": "4.23.13"
   }
 }
