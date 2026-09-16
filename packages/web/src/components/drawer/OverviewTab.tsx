@@ -339,6 +339,23 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
                         ? '✓ passed'
                         : '✗ failed',
                 },
+                ...(task.current_attempt.pr_url
+                  ? [
+                      {
+                        k: 'Pull request',
+                        v: (
+                          <a
+                            className="inline-flex items-center gap-1 text-accent-600 hover:underline dark:text-accent-300"
+                            href={task.current_attempt.pr_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <ExternalLink size={12} /> {task.current_attempt.pr_url}
+                          </a>
+                        ),
+                      },
+                    ]
+                  : []),
               ]}
             />
           ) : (
