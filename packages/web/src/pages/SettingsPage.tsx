@@ -228,6 +228,11 @@ function SettingsForm({ project }: { project: Project }) {
               label="Refinement step: Backlog → To do asks the agent to read the repo, plan, and raise questions first"
             />
             <Switch
+              checked={form.auto_start}
+              onChange={(v) => set('auto_start', v)}
+              label={`Auto-start: run every task as soon as it reaches To do (at most ${form.max_concurrent_runs} agent${form.max_concurrent_runs === 1 ? '' : 's'} in parallel; the rest wait in Doing as "queued")`}
+            />
+            <Switch
               checked={form.auto_done}
               onChange={(v) => set('auto_done', v)}
               label="Auto-merge to Done when the test script passes (off by default)"
