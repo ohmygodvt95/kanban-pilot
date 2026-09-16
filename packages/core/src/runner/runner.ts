@@ -199,14 +199,24 @@ export class JobRunner {
             await this.ctx.store.finishJob(job.id, 'failed', { error: 'project no longer exists' });
             continue;
           }
-          const running =
-            (await this.ctx.store.countRunningRuns(project.id)) + (claimedProjects.get(project.id) ?? 0);
+          const inDb = await this.ctx.store.countRunningRuns(project.id);
+          const local = this.claimedAgents.get(project.id)?.size ?? 0;
+          const running = Math.max(inDb, local) + (claimedProjects.get(project.id) ?? 0);
           if (running >= project.max_concurrent_runs) continue;
           claimedProjects.set(project.id, (claimedProjects.get(project.id) ?? 0) + 1);
         }
         const locked = await this.ctx.store.lockJob(job.id, this.lockId);
         if (!locked) continue;
-        this.track(this.execute(locked));
+        if (locked.kind === 'run_agent') {
+          // Remember the claim until the run is finalised (see claimedAgents).
+          const payload = locked.payload as RunAgentJobPayload;
+          const set = this.claimedAgents.get(payload.projectId) ?? new Set<string>();
+          set.add(payload.runId);
+          this.claimedAgents.set(payload.projectId, set);
+          this.track(this.execute(locked).finally(() => set.delete(payload.runId)));
+        } else {
+          this.track(this.execute(locked));
+        }
       }
     } catch (err) {
       this.ctx.logger.error({ err: errorMessage(err) }, 'runner tick failed');

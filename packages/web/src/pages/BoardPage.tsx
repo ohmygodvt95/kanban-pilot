@@ -51,6 +51,8 @@ function matches(
   }
   if (quick === 'running')
     return task.column === 'doing' && (task.substate === 'running' || task.substate === 'queued');
+  if (quick === 'bugs') return task.kind === 'bug';
+  if (quick === 'urgent') return task.priority === 'urgent' || task.priority === 'high';
   return true;
 }
 
@@ -272,9 +274,17 @@ function NewTaskModal({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [skip, setSkip] = useState(false);
+  const [kind, setKind] = useState<TaskKind | ''>('');
+  const [priority, setPriority] = useState<TaskPriority | ''>('');
   const create = useMutation({
     mutationFn: () =>
-      api.projects.createTask(projectId, { title: title.trim(), description, skip_refinement: skip }),
+      api.projects.createTask(projectId, {
+        title: title.trim(),
+        description,
+        skip_refinement: skip,
+        kind: kind || null,
+        priority: priority || null,
+      }),
     onSuccess: (t) => {
       upsertTask(qc, t);
       void qc.invalidateQueries({ queryKey: keys.tasks(projectId) });
@@ -322,6 +332,41 @@ function NewTaskModal({
             onChange={(e) => setDescription(e.target.value)}
           />
         </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="Type"
+            hint={
+              refinementEnabled ? 'Leave on auto and the planner classifies it during refinement.' : undefined
+            }
+          >
+            <select
+              className={inputClass}
+              value={kind}
+              onChange={(e) => setKind(e.target.value as TaskKind | '')}
+            >
+              <option value="">auto</option>
+              {TASK_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Priority" hint="Urgent/high tasks run first when the queue is full.">
+            <select
+              className={inputClass}
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as TaskPriority | '')}
+            >
+              <option value="">auto</option>
+              {TASK_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {PRIORITY_LABELS[p]}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
         {refinementEnabled ? (
           <Switch
             checked={skip}
@@ -412,6 +457,11 @@ function ImportIssuesModal({
                 <span className="ml-2 font-mono text-[11px] text-zinc-500">{i.externalId}</span>
                 {i.labels.length ? (
                   <span className="ml-2 text-[11px] text-zinc-500">{i.labels.join(', ')}</span>
+                ) : null}
+                {i.kind || i.priority ? (
+                  <span className="ml-2 text-[11px] text-accent-600 dark:text-accent-300">
+                    → {i.kind ? KIND_LABELS[i.kind] : ''} {i.priority ? PRIORITY_LABELS[i.priority] : ''}
+                  </span>
                 ) : null}
                 <span className="line-clamp-2 block text-xs text-zinc-500">{i.body}</span>
               </span>
