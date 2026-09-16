@@ -7,7 +7,7 @@ import type {
   PullRequestInput,
   SyncContext,
 } from './types.js';
-import { classifyLabels, jsonRequest } from './types.js';
+import { type CreateIssueInput, classifyLabels, jsonRequest, labelsCreateMeta } from './types.js';
 
 /** GitLab.com or self-hosted; `projectRef` is the project path ("group/sub/project"). */
 class GitLabProvider implements IssueProvider {
@@ -123,6 +123,23 @@ class GitLabProvider implements IssueProvider {
       }),
     });
     return mr.web_url;
+  }
+
+  async createMeta() {
+    return labelsCreateMeta(await this.listStatuses());
+  }
+
+  async createIssue(input: CreateIssueInput) {
+    const labels = [...(input.labels ?? []), ...((input.fields?.labels as string[] | undefined) ?? [])];
+    const raw = await this.request<GitLabIssue>(`/projects/${this.project}/issues`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: input.title,
+        description: input.body,
+        ...(labels.length ? { labels: labels.join(',') } : {}),
+      }),
+    });
+    return this.toIssue(raw);
   }
 }
 

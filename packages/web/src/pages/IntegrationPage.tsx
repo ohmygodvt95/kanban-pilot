@@ -5,23 +5,26 @@
  */
 import type {
   Column,
+  CreateMeta,
   Integration,
   IntegrationInput,
   ProviderModuleInfo,
   StatusMap,
 } from '@agent-kanban/shared';
-import { COLUMNS } from '@agent-kanban/shared';
+import { COLUMNS, TASK_KINDS, TASK_PRIORITIES } from '@agent-kanban/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2, Download, Plug, RefreshCw, Save, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { keys, useIntegration, useProject, useProviderModules } from '../api/queries';
+import { RemoteFieldInput } from '../components/drawer/PushToTrackerModal';
 import { Shell } from '../components/Shell';
 import { Button, Card, Field, inputClass, Switch, useConfirm } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { formatTime } from '../lib/format';
 import { COLUMN_LABELS } from '../lib/state';
+import { KIND_LABELS, PRIORITY_LABELS } from '../lib/taskmeta';
 
 interface FormState {
   provider: ProviderModuleInfo['id'];
@@ -35,6 +38,12 @@ interface FormState {
   sync_status: boolean;
   sync_comments: boolean;
   poll_interval_seconds: number;
+  push_on_todo: boolean;
+  push_defaults: {
+    issue_type_by_kind: Record<string, string | null>;
+    priority_map: Record<string, string | null>;
+    fields: Record<string, unknown>;
+  };
 }
 
 const emptyMap = (): StatusMap => ({ backlog: [], todo: [], doing: [], review: [], done: [] });
@@ -52,6 +61,8 @@ function fromIntegration(i: Integration | null, module: ProviderModuleInfo | und
     sync_status: i?.sync_status ?? true,
     sync_comments: i?.sync_comments ?? true,
     poll_interval_seconds: i?.poll_interval_seconds ?? 30,
+    push_on_todo: i?.push_on_todo ?? false,
+    push_defaults: i?.push_defaults ?? { issue_type_by_kind: {}, priority_map: {}, fields: {} },
   };
 }
 
@@ -68,6 +79,8 @@ function toInput(f: FormState): IntegrationInput {
     sync_status: f.sync_status,
     sync_comments: f.sync_comments,
     poll_interval_seconds: f.poll_interval_seconds,
+    push_on_todo: f.push_on_todo,
+    push_defaults: f.push_defaults,
   };
 }
 
@@ -129,6 +142,12 @@ function IntegrationForm({
     }));
   }, [suggest.data, integration, modules]);
 
+  const createMeta = useQuery({
+    queryKey: ['integration-create-meta', projectId, integration?.updated_at],
+    queryFn: () => api.projects.createMeta(projectId),
+    enabled: !!integration,
+    retry: false,
+  });
   const remoteStatuses = useQuery({
     queryKey: ['integration-statuses', projectId, integration?.updated_at],
     queryFn: () => api.projects.integrationStatuses(projectId),
@@ -375,6 +394,16 @@ function IntegrationForm({
         </Card>
 
         {integration ? (
+          <PushDefaultsCard
+            form={form}
+            set={set}
+            meta={createMeta.data}
+            error={createMeta.isError ? (createMeta.error as Error).message : null}
+            statusModel={module?.statusModel ?? 'labels'}
+          />
+        ) : null}
+
+        {integration ? (
           <Card title="Danger zone">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <p className="min-w-0 flex-1 text-sm text-zinc-500">
@@ -468,5 +497,130 @@ function StatusRow({
         </datalist>
       </div>
     </div>
+  );
+}
+
+/**
+ * Defaults applied when a local task is pushed to the tracker: issue type per task
+ * kind, priority names, and values for required/custom fields (so the push form
+ * has nothing left to ask).
+ */
+function PushDefaultsCard({
+  form,
+  set,
+  meta,
+  error,
+  statusModel,
+}: {
+  form: FormState;
+  set: <K extends keyof FormState>(k: K, v: FormState[K]) => void;
+  meta: CreateMeta | undefined;
+  error: string | null;
+  statusModel: 'workflow' | 'labels';
+}) {
+  const defaults = form.push_defaults;
+  const update = (patch: Partial<FormState['push_defaults']>) =>
+    set('push_defaults', { ...defaults, ...patch });
+  const defaultTypeId = defaults.issue_type_by_kind.task ?? meta?.issueTypes[0]?.id ?? null;
+  const defaultType = meta?.issueTypes.find((t) => t.id === defaultTypeId) ?? meta?.issueTypes[0];
+  // fields worth a default: required ones the tracker does not fill, plus labels
+  const candidates = (defaultType?.fields ?? []).filter(
+    (f) =>
+      !['summary', 'description', 'issuetype', 'project', 'reporter', 'priority'].includes(f.key) &&
+      (f.required || f.type === 'labels') &&
+      !f.hasDefault,
+  );
+  const priorityOptions = defaultType?.fields.find((f) => f.key === 'priority')?.allowedValues ?? [];
+  return (
+    <Card title="Push defaults">
+      <div className="grid gap-4">
+        <p className="text-xs text-zinc-500">
+          Used by "Push to tracker" on a task (and by auto-push). Anything still missing is asked in a small
+          form at push time.
+        </p>
+        <Switch
+          checked={form.push_on_todo}
+          onChange={(v) => set('push_on_todo', v)}
+          label="Auto-push: create the issue when a local task first reaches To do"
+        />
+        {error ? (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Could not load create metadata: {error}
+          </p>
+        ) : null}
+        {meta && statusModel === 'workflow' ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {TASK_KINDS.map((k) => (
+                <Field key={k} label={`Issue type for "${KIND_LABELS[k]}"`}>
+                  <select
+                    className={inputClass}
+                    value={defaults.issue_type_by_kind[k] ?? ''}
+                    onChange={(e) =>
+                      update({
+                        issue_type_by_kind: { ...defaults.issue_type_by_kind, [k]: e.target.value || null },
+                      })
+                    }
+                  >
+                    <option value="">tracker default</option>
+                    {meta.issueTypes.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ))}
+            </div>
+            {priorityOptions.length ? (
+              <div className="grid gap-3 sm:grid-cols-4">
+                {TASK_PRIORITIES.map((p) => (
+                  <Field key={p} label={`Priority "${PRIORITY_LABELS[p]}"`}>
+                    <select
+                      className={inputClass}
+                      value={defaults.priority_map[p] ?? ''}
+                      onChange={(e) =>
+                        update({ priority_map: { ...defaults.priority_map, [p]: e.target.value || null } })
+                      }
+                    >
+                      <option value="">not set</option>
+                      {priorityOptions.map((o) => (
+                        <option key={o.id} value={o.name}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ))}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+        {candidates.length ? (
+          <div className="grid gap-3">
+            <div className="text-xs text-zinc-500">
+              Default values for "{defaultType?.name}" fields the tracker requires:
+            </div>
+            {candidates.map((f) => (
+              <Field
+                key={f.key}
+                label={`${f.name}${f.required ? ' *' : ''}`}
+                hint={<span className="font-mono">{f.key}</span>}
+              >
+                <RemoteFieldInput
+                  field={f}
+                  value={defaults.fields[f.key]}
+                  onChange={(v) => update({ fields: { ...defaults.fields, [f.key]: v } })}
+                />
+              </Field>
+            ))}
+          </div>
+        ) : meta ? (
+          <p className="text-xs text-zinc-500">
+            No extra required fields for "{defaultType?.name}" — pushes need nothing else.
+          </p>
+        ) : null}
+      </div>
+    </Card>
   );
 }

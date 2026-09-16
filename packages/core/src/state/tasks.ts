@@ -362,6 +362,76 @@ export class TaskService {
     }
   }
 
+  /**
+   * Create the task on the linked tracker. Required remote fields without a value
+   * (integration defaults or `input.fields`) raise CONFIRM_REQUIRED with the list of
+   * missing fields so the UI can ask for them. On success the task is linked
+   * (source_* columns) and its current column is synced like an imported task.
+   */
+  async pushToTracker(
+    taskId: string,
+    input: { issueTypeId?: string | null; fields?: Record<string, unknown> } = {},
+  ): Promise<Task> {
+    const task = await this.store.getTask(taskId);
+    if (task.source_external_id)
+      throw new CoreError('CONFLICT', `task is already linked to ${task.source_external_id}`);
+    const link = await this.deps.integrations().provider(task.project_id);
+    if (!link) throw new CoreError('CONFLICT', 'no tracker configured for this project (Integration screen)');
+    const defaults = link.row.push_defaults;
+    const meta = await link.provider.createMeta();
+    const wantedType = input.issueTypeId ?? defaults.issue_type_by_kind[task.kind ?? 'task'] ?? null;
+    const type =
+      meta.issueTypes.find((t) => t.id === wantedType) ??
+      meta.issueTypes.find((t) => /task|issue/i.test(t.name)) ??
+      meta.issueTypes[0];
+    if (!type) throw new CoreError('CONFLICT', 'the tracker reports no issue type this account can create');
+    const provided: Record<string, unknown> = { ...defaults.fields, ...(input.fields ?? {}) };
+    const filledByUs = new Set([
+      'summary',
+      'description',
+      'title',
+      'body',
+      'project',
+      'issuetype',
+      'labels',
+      'priority',
+    ]);
+    const missing = type.fields.filter(
+      (f) =>
+        f.required &&
+        !f.hasDefault &&
+        !filledByUs.has(f.key) &&
+        (provided[f.key] === undefined || provided[f.key] === '' || provided[f.key] === null),
+    );
+    if (missing.length) {
+      throw new CoreError(
+        'CONFIRM_REQUIRED',
+        `${link.row.provider} needs ${missing.length} more field(s) for a "${type.name}"`,
+        {
+          issue_type: { id: type.id, name: type.name },
+          missing,
+        },
+      );
+    }
+    const priority = task.priority ? (defaults.priority_map[task.priority] ?? null) : null;
+    const issue = await link.provider.createIssue({
+      title: task.title,
+      body: task.description,
+      issueTypeId: type.id,
+      priority,
+      labels: task.kind && task.kind !== 'task' ? [task.kind] : [],
+      fields: provided,
+    });
+    const linked = await this.store.updateTask(taskId, {
+      source_provider: link.row.provider,
+      source_external_id: issue.externalId,
+      source_url: issue.url,
+      last_error: null,
+    });
+    void this.deps.issues().syncNow(linked);
+    return linked;
+  }
+
   /** Imported issues already marked "ready" on the tracker skip refinement and land in TODO. */
   async importToTodo(taskId: string): Promise<Task> {
     await this.store.updateTask(taskId, { skip_refinement: true });
@@ -413,8 +483,32 @@ export class TaskService {
     // Mirror the column change on the linked issue (fire-and-forget; never blocks the transition).
     if (result.column !== task.column && !payload.skip_issue_sync)
       void this.deps.issues().syncTask(task, result);
+    // Optionally create the issue on the tracker when a local task first reaches TODO.
+    if (result.column === 'todo' && task.column === 'backlog' && !result.source_external_id)
+      void this.maybeAutoPush(result);
     // A task that just became TODO(ready) may be started right away by the project.
     return result.column === 'todo' && task.column !== 'todo' ? this.maybeAutoStart(result) : result;
+  }
+
+  /** push_on_todo: best-effort; missing required fields are reported on the task, never block the move. */
+  private async maybeAutoPush(task: Task): Promise<void> {
+    const link = await this.deps
+      .integrations()
+      .provider(task.project_id)
+      .catch(() => null);
+    if (!link?.row.push_on_todo) return;
+    try {
+      await this.pushToTracker(task.id);
+    } catch (err) {
+      const message =
+        err instanceof CoreError && err.code === 'CONFIRM_REQUIRED'
+          ? `${err.message} — use "Push to tracker" on the task to fill them in`
+          : errorMessage(err);
+      this.ctx.logger.warn({ task: task.id, err: message }, 'auto push failed');
+      await this.store
+        .updateTask(task.id, { last_error: `push to tracker failed: ${message}` })
+        .catch(() => {});
+    }
   }
 
   private async apply(

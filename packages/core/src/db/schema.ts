@@ -183,6 +183,11 @@ export const integrations = sqliteTable('integrations', {
   auth: text('auth', { mode: 'json' }).$type<IntegrationAuth>().notNull(),
   import_filter: text('import_filter'),
   status_map: text('status_map', { mode: 'json' }).$type<StatusMap>().notNull(),
+  push_defaults: text('push_defaults', { mode: 'json' })
+    .$type<PushDefaults>()
+    .notNull()
+    .default({ issue_type_by_kind: {}, priority_map: {}, fields: {} }),
+  push_on_todo: bool('push_on_todo').notNull().default(false),
   sync_status: bool('sync_status').notNull().default(true),
   sync_comments: bool('sync_comments').notNull().default(true),
   poll_interval_seconds: integer('poll_interval_seconds').notNull().default(30),
@@ -191,6 +196,12 @@ export const integrations = sqliteTable('integrations', {
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 });
+
+export interface PushDefaults {
+  issue_type_by_kind: Record<string, string | null>;
+  priority_map: Record<string, string | null>;
+  fields: Record<string, unknown>;
+}
 
 export interface IntegrationAuth {
   username?: string | null;

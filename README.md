@@ -76,6 +76,12 @@ the main working tree of your repo is never touched by an agent.
   markup is converted to markdown) are pulled every 30 s (configurable), and a **status map** decides both where imported issues land
   (which column each remote status means) and what is written back when a task moves (Jira transition or label swap,
   plus an optional comment; Done closes GitHub/GitLab issues).
+- **Push local tasks to the tracker.** A task created on the board can be sent the other way with *Push to
+  <tracker>* in its Overview (or automatically the first time it reaches *To do* — *Auto-push* on the Integration
+  screen). The tracker's create metadata is read first (Jira `createmeta`, labels for GitHub/GitLab); *Push
+  defaults* on the Integration screen fix the issue type per task kind, the priority names and values for required
+  custom fields, and whatever is still missing is asked in a small form before the issue is created. The task is
+  then linked like an imported one, so status write-back and comments work from that point on.
 - **Type & priority.** Tasks carry a kind (task/bug/feature/chore) and a priority (low…urgent). Leave them on
   *auto* and the planner fills them during refinement; imported issues get them from labels (`bug`, `enhancement`,
   `priority::high`, `P0`…). Urgent/high tasks run first when `max_concurrent_runs` is saturated; the board has

@@ -8,6 +8,7 @@
  */
 import type {
   Column,
+  CreateMeta,
   ProviderId,
   ProviderModuleInfo,
   StatusMap,
@@ -58,6 +59,20 @@ export interface ProviderConfig {
   statusNames: string[];
 }
 
+/** What a provider needs to create an issue from a local task. */
+export interface CreateIssueInput {
+  title: string;
+  /** Markdown body; providers convert to their own markup. */
+  body: string;
+  /** Remote issue type id (Jira); ignored by label-based trackers. */
+  issueTypeId?: string | null;
+  /** Remote priority name (Jira) when the integration maps it. */
+  priority?: string | null;
+  labels?: string[];
+  /** Extra remote fields keyed by their remote key (custom fields, components…). */
+  fields?: Record<string, unknown>;
+}
+
 export interface IssueProvider {
   readonly id: ProviderId;
   /** Verify credentials and project access; `message` explains failures. */
@@ -72,6 +87,10 @@ export interface IssueProvider {
   addComment(externalId: string, body: string): Promise<void>;
   /** Open a pull/merge request and return its URL. */
   createPullRequest?(input: PullRequestInput): Promise<string>;
+  /** Issue types and their (required) fields, so the UI can ask for what the tracker needs. */
+  createMeta(): Promise<CreateMeta>;
+  /** Create an issue from a local task and return it (with externalId/url). */
+  createIssue(input: CreateIssueInput): Promise<ExternalIssue>;
 }
 
 export interface ProviderModule {
@@ -141,6 +160,27 @@ export class HttpError extends Error {
     super(message);
     this.name = 'HttpError';
   }
+}
+
+/** Create metadata of label-based trackers: one issue type whose only optional field is `labels`. */
+export function labelsCreateMeta(labels: string[]): CreateMeta {
+  return {
+    issueTypes: [
+      {
+        id: 'issue',
+        name: 'Issue',
+        fields: [
+          {
+            key: 'labels',
+            name: 'Labels',
+            required: false,
+            type: 'labels',
+            allowedValues: labels.map((l) => ({ id: l, name: l })),
+          },
+        ],
+      },
+    ],
+  };
 }
 
 /** Small helper shared by REST providers. HTML error pages are reduced to their title. */

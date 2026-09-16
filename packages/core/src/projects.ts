@@ -160,7 +160,9 @@ export class ProjectService {
   /** Issues from the tracker, annotated with `imported` and the column the status map assigns. */
   async listIssues(projectId: string, filter: { query?: string } = {}): Promise<ExternalIssue[]> {
     const link = await this.requireProvider(projectId);
-    const imported = new Set((await this.ctx.store.listTasks(projectId)).map((t) => t.source_external_id).filter(Boolean));
+    const imported = new Set(
+      (await this.ctx.store.listTasks(projectId)).map((t) => t.source_external_id).filter(Boolean),
+    );
     return (await link.provider.listIssues(filter)).map((i) => ({
       ...i,
       imported: imported.has(i.externalId),

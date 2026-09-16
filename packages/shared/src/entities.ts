@@ -267,6 +267,17 @@ export const integrationSchema = z.object({
   /** Provider-specific import filter: labels (GitHub/GitLab) or JQL (Jira). */
   import_filter: nullableString,
   status_map: statusMapSchema,
+  /** Defaults used when a local task is pushed to the tracker as a new issue. */
+  push_defaults: z.object({
+    /** Remote issue type id per task kind (Jira); null = tracker default. */
+    issue_type_by_kind: z.record(z.string(), z.string().nullable()),
+    /** Remote priority name per task priority (Jira). */
+    priority_map: z.record(z.string(), z.string().nullable()),
+    /** Default values for required/custom fields, keyed by remote field key. */
+    fields: z.record(z.string(), z.unknown()),
+  }),
+  /** Create the issue automatically when a local task reaches TODO. */
+  push_on_todo: z.boolean(),
   /** Write task milestones back as remote statuses (transitions / labels). */
   sync_status: z.boolean(),
   /** Also leave a short comment on the issue at each milestone. */
@@ -280,6 +291,29 @@ export const integrationSchema = z.object({
 export type Integration = z.infer<typeof integrationSchema>;
 
 /** One configurable field of a provider module (drives the settings form). */
+/** One field of a remote issue type, as reported by the tracker's create metadata. */
+export const remoteFieldSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  required: z.boolean(),
+  type: z.enum(['string', 'text', 'number', 'date', 'select', 'multiselect', 'user', 'labels', 'unknown']),
+  allowedValues: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+  /** true when the tracker fills the value itself (reporter, project…) — never asked from the user. */
+  hasDefault: z.boolean().optional(),
+});
+export type RemoteField = z.infer<typeof remoteFieldSchema>;
+
+export const remoteIssueTypeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  fields: z.array(remoteFieldSchema),
+});
+export type RemoteIssueType = z.infer<typeof remoteIssueTypeSchema>;
+
+/** Create metadata of the linked tracker project (GET /projects/:id/integration/create-meta). */
+export const createMetaSchema = z.object({ issueTypes: z.array(remoteIssueTypeSchema) });
+export type CreateMeta = z.infer<typeof createMetaSchema>;
+
 export const providerFieldSchema = z.object({
   key: z.enum(['base_url', 'project_ref', 'username', 'token', 'password', 'import_filter']),
   label: z.string(),

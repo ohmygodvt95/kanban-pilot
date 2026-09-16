@@ -962,6 +962,73 @@ describe('issue tracker integration, classification and priority queue', () => {
     ]);
   });
 
+  it('pushes a local task to the tracker, asking for missing required fields first', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    await core.integrations.upsert(project.id, {
+      provider: 'github',
+      project_ref: 'acme/app',
+      token: 't',
+      push_defaults: { issue_type_by_kind: { bug: '10004' }, priority_map: { high: 'High' } },
+    });
+    const task = await core.tasks.create(project.id, {
+      title: 'Local task',
+      description: '# Plan\n- a',
+      priority: 'high',
+    });
+    // "Task" type has a required Component select without a default → ask
+    await expect(core.tasks.pushToTracker(task.id)).rejects.toMatchObject({
+      code: 'CONFIRM_REQUIRED',
+      details: {
+        issue_type: { id: '10001', name: 'Task' },
+        missing: [expect.objectContaining({ key: 'components', type: 'select' })],
+      },
+    });
+    const linked = await core.tasks.pushToTracker(task.id, { fields: { components: 'c1' } });
+    expect(linked.source_external_id).toBe('NEW-1');
+    expect(linked.source_provider).toBe('github');
+    expect(tracker.created[0]).toMatchObject({
+      title: 'Local task',
+      issueTypeId: '10001',
+      priority: 'High',
+      fields: { components: 'c1' },
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(tracker.statuses.at(-1)).toMatchObject({ ref: 'NEW-1', status: 'Backlog', column: 'backlog' });
+    await expect(core.tasks.pushToTracker(task.id)).rejects.toMatchObject({ code: 'CONFLICT' });
+    // a bug uses the mapped issue type, which has no extra required fields
+    const bug = await core.tasks.create(project.id, { title: 'Crash', description: '', kind: 'bug' });
+    expect((await core.tasks.pushToTracker(bug.id)).source_external_id).toBe('NEW-2');
+    expect(tracker.created[1]?.issueTypeId).toBe('10004');
+    expect(tracker.created[1]?.labels).toEqual(['bug']);
+  });
+
+  it('push_on_todo creates the issue automatically and reports missing fields on the task', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    await core.integrations.upsert(project.id, {
+      provider: 'github',
+      project_ref: 'acme/app',
+      token: 't',
+      push_on_todo: true,
+      push_defaults: { fields: { components: 'c2' } },
+    });
+    const ok = await core.tasks.create(project.id, { title: 'auto', description: 'x' });
+    await core.tasks.transition(ok.id, 'todo', 'user');
+    await new Promise((r) => setTimeout(r, 150));
+    expect((await core.store.getTask(ok.id)).source_external_id).toBe('NEW-1');
+    await core.integrations.upsert(project.id, {
+      provider: 'github',
+      project_ref: 'acme/app',
+      push_on_todo: true,
+      push_defaults: { fields: {} },
+    });
+    const missing = await core.tasks.create(project.id, { title: 'needs fields', description: 'x' });
+    await core.tasks.transition(missing.id, 'todo', 'user');
+    await new Promise((r) => setTimeout(r, 150));
+    const t = await core.store.getTask(missing.id);
+    expect(t.source_external_id).toBeNull();
+    expect(t.last_error).toMatch(/push to tracker failed.*Push to tracker/);
+  });
+
   it('respects sync switches and polls only integrations whose interval elapsed', async () => {
     tracker.issues = [
       { externalId: '7', url: 'https://t/7', title: 'Tidy', body: '', labels: ['chore'], status: null },

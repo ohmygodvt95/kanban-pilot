@@ -2,6 +2,7 @@ import type {
   Attempt,
   Comment,
   CreateCommentInput,
+  CreateMeta,
   CreateProjectInput,
   CreateTaskInput,
   DiffResult,
@@ -12,6 +13,7 @@ import type {
   Project,
   ProviderModuleInfo,
   ProviderStatus,
+  PushTaskInput,
   Run,
   RunEvent,
   Task,
@@ -94,6 +96,7 @@ export const api = {
     testIntegration: (id: string, input: IntegrationInput) =>
       request<{ ok: boolean; message?: string }>(`/projects/${id}/integration/test`, json(input)),
     integrationStatuses: (id: string) => request<string[]>(`/projects/${id}/integration/statuses`),
+    createMeta: (id: string) => request<CreateMeta>(`/projects/${id}/integration/create-meta`),
     fetchIssues: (id: string) =>
       request<{ imported: number }>(`/projects/${id}/integration/fetch`, { method: 'POST' }),
     tasks: (id: string) => request<Task[]>(`/projects/${id}/tasks`),
@@ -129,6 +132,8 @@ export const api = {
     updateBase: (id: string) =>
       request<{ task: Task; conflicts: string[] }>(`/tasks/${id}/attempts/update-base`, { method: 'POST' }),
     runTests: (id: string) => request<{ ok: true }>(`/tasks/${id}/tests/run`, { method: 'POST' }),
+    /** Create the task on the linked tracker (409 CONFIRM_REQUIRED → missing fields in error.details). */
+    push: (id: string, input: PushTaskInput) => request<Task>(`/tasks/${id}/push`, json(input)),
     discard: (id: string) => request<Task>(`/tasks/${id}/attempts/discard`, { method: 'POST' }),
   },
   comments: { delete: (id: string) => request<void>(`/comments/${id}`, { method: 'DELETE' }) },

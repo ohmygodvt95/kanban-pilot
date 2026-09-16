@@ -1,5 +1,5 @@
 import type { Integration, ProviderId, ProviderModuleInfo, StatusMap } from '@agent-kanban/shared';
-import type { IntegrationAuth } from '../db/schema.js';
+import type { IntegrationAuth, PushDefaults } from '../db/schema.js';
 import { githubModule } from './github.js';
 import { gitlabModule } from './gitlab.js';
 import { jiraModule } from './jira.js';
@@ -31,6 +31,7 @@ export interface IntegrationRow {
   auth: IntegrationAuth;
   import_filter: string | null;
   status_map: StatusMap;
+  push_defaults: PushDefaults;
 }
 
 export function buildProvider(registry: ProviderRegistry, row: IntegrationRow): IssueProvider {

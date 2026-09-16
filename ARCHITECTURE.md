@@ -77,11 +77,15 @@ feedback; refine/chat: full context) and re-points consumed comments to it. `run
 
 - **Trackers** (`providers/`, `integrations.ts`, `issues.ts`): a `ProviderModule` = `info` (id, form fields, default
   status map) + `create(config)` → `IssueProvider` (`check`, `listIssues`, `getIssue`, `listStatuses`, `setStatus`,
-  `addComment`, optional `createPullRequest`). `IntegrationService` stores one row per project (`integrations`
+  `addComment`, `createMeta`, `createIssue`, optional `createPullRequest`). `IntegrationService` stores one row per project (`integrations`
   table, secrets kept locally, masked in the API) and builds the provider. `IssueService.syncTask()` runs after
   every column change: `statusForColumn(status_map)` → `setStatus` (+ comment); `pollDue()` runs from a 10 s ticker
   and imports issues whose integration interval elapsed, placing them via `columnForStatus()` (done skipped,
-  doing/review → todo with refinement skipped).
+  doing/review → todo with refinement skipped). The reverse direction is `TaskService.pushToTracker()`: it
+  merges `integrations.push_defaults` with the caller's fields, compares them with `createMeta()` and throws
+  `CONFIRM_REQUIRED` listing the missing required fields (the UI renders them as a form and retries); on success
+  the task gets `source_*` set and is synced like an imported one. `push_on_todo` runs the same code best-effort
+  on the backlog → todo transition and reports missing fields in `last_error`.
 - **Priority queue**: `jobs.priority` is derived from the task priority; `Store.queuedJobs()` orders by priority
   then age. The runner also counts locally claimed `run_agent` jobs so `max_concurrent_runs` cannot be
   over-subscribed between ticks.
@@ -90,7 +94,8 @@ feedback; refine/chat: full context) and re-points consumed comments to it. `run
 
 Create `providers/<id>.ts` exporting a `ProviderModule`: fill `info` (display name, the fields the settings form
 should show — base_url / project_ref / username / token / password / import_filter —, `statusModel`, a default
-status map), implement `detectFromRemote()` (or return null) and `create(config)` returning an `IssueProvider`.
+status map), implement `detectFromRemote()` (or return null) and `create(config)` returning an `IssueProvider` — `createMeta()`
+can simply return `labelsCreateMeta(statuses)` for label-based trackers.
 Register it in `createDefaultProviders()` and add the id to `providerIdSchema` in `packages/shared`. The
 integration screen, polling and status sync need no changes. GitHub, GitLab and Jira (basic auth, REST v2) ship.
 

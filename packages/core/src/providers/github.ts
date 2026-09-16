@@ -7,7 +7,7 @@ import type {
   PullRequestInput,
   SyncContext,
 } from './types.js';
-import { classifyLabels, jsonRequest } from './types.js';
+import { type CreateIssueInput, classifyLabels, jsonRequest, labelsCreateMeta } from './types.js';
 
 const DEFAULT_API = 'https://api.github.com';
 
@@ -136,6 +136,19 @@ class GitHubProvider implements IssueProvider {
       body: JSON.stringify(input),
     });
     return pr.html_url;
+  }
+
+  async createMeta() {
+    return labelsCreateMeta(await this.listStatuses());
+  }
+
+  async createIssue(input: CreateIssueInput) {
+    const labels = [...(input.labels ?? []), ...((input.fields?.labels as string[] | undefined) ?? [])];
+    const raw = await this.request<GitHubIssue>(`/repos/${this.cfg.projectRef}/issues`, {
+      method: 'POST',
+      body: JSON.stringify({ title: input.title, body: input.body, ...(labels.length ? { labels } : {}) }),
+    });
+    return this.toIssue(raw);
   }
 }
 

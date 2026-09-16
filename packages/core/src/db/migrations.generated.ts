@@ -104,5 +104,14 @@ export const MIGRATIONS: EmbeddedMigration[] = [
       "-- Remove duplicate imports created before the unique index existed: keep the oldest task per issue,\n-- but never delete a task that already has an attempt or left the backlog/todo columns.\nDELETE FROM `tasks`\nWHERE `source_external_id` IS NOT NULL\n  AND `current_attempt_id` IS NULL\n  AND `column` IN ('backlog', 'todo')\n  AND `id` NOT IN (\n    SELECT MIN(`id`) FROM `tasks` WHERE `source_external_id` IS NOT NULL\n    GROUP BY `project_id`, `source_provider`, `source_external_id`\n  );",
       "CREATE UNIQUE INDEX `tasks_project_source_unique` ON `tasks` (`project_id`,`source_provider`,`source_external_id`) WHERE source_external_id IS NOT NULL;"
     ]
+  },
+  {
+    "tag": "0008_jazzy_puppet_master",
+    "when": 1789551638893,
+    "hash": "eb3fa46234d75e0d396e11c47434cf6bb9b90d3032f4e4f25f3fdc8232571393",
+    "sql": [
+      "ALTER TABLE `integrations` ADD `push_defaults` text DEFAULT '{\"issue_type_by_kind\":{},\"priority_map\":{},\"fields\":{}}' NOT NULL;",
+      "ALTER TABLE `integrations` ADD `push_on_todo` integer DEFAULT false NOT NULL;"
+    ]
   }
 ];

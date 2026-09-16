@@ -57,6 +57,13 @@
       "when": 1789548700176,
       "tag": "0007_sad_puma",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789551638893,
+      "tag": "0008_jazzy_puppet_master",
+      "breakpoints": true
     }
   ]
 }

@@ -60,6 +60,10 @@ export function projectRoutes(core: Core) {
   app.get('/:id/integration/statuses', async (c) =>
     c.json(await core.integrations.statuses(c.req.param('id'))),
   );
+  /** Issue types + fields the tracker needs to create an issue (drives push defaults and the push form). */
+  app.get('/:id/integration/create-meta', async (c) =>
+    c.json(await core.integrations.createMeta(c.req.param('id'))),
+  );
   /** Import new issues right now. */
   app.post('/:id/integration/fetch', async (c) =>
     c.json({ imported: await core.issues.pollProject(c.req.param('id')) }),

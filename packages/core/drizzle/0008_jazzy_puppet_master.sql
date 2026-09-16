@@ -1,0 +1,2 @@
+ALTER TABLE `integrations` ADD `push_defaults` text DEFAULT '{"issue_type_by_kind":{},"priority_map":{},"fields":{}}' NOT NULL;--> statement-breakpoint
+ALTER TABLE `integrations` ADD `push_on_todo` integer DEFAULT false NOT NULL;

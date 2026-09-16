@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { githubModule } from './github.js';
 import { gitlabModule } from './gitlab.js';
 import { buildProvider, createDefaultProviders, detectFromRemote, listProviderModules } from './index.js';
-import { jiraModule, jiraWikiToMarkdown } from './jira.js';
+import { jiraModule, jiraWikiToMarkdown, markdownToJiraWiki } from './jira.js';
 import { classifyLabels, columnForStatus, statusComment, statusForColumn } from './types.js';
 
 const cfg = (over: Record<string, unknown> = {}) => ({
@@ -233,6 +233,101 @@ describe('provider modules', () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+
+  it('reads Jira create metadata and posts a well-formed issue', async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      calls.push({ url: u, init: init ?? {} });
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+      if (u.includes('/issue/createmeta')) {
+        return json({
+          projects: [
+            {
+              issuetypes: [
+                {
+                  id: '1',
+                  name: 'Task',
+                  fields: {
+                    summary: { name: 'Summary', required: true, schema: { type: 'string' } },
+                    issuetype: { name: 'Issue Type', required: true },
+                    reporter: { name: 'Reporter', required: true, schema: { type: 'user' } },
+                    priority: {
+                      name: 'Priority',
+                      required: false,
+                      allowedValues: [{ id: '2', name: 'High' }],
+                    },
+                    customfield_10100: {
+                      name: 'Team',
+                      required: true,
+                      schema: { type: 'option', custom: 'x:select' },
+                      allowedValues: [{ id: '55', value: 'Core' }],
+                    },
+                    labels: { name: 'Labels', required: false, schema: { type: 'array', items: 'string' } },
+                  },
+                },
+                { id: '9', name: 'Sub-task', subtask: true, fields: {} },
+              ],
+            },
+          ],
+        });
+      }
+      if (u.endsWith('/issue') && init?.method === 'POST') return json({ key: 'PROJ-99' });
+      if (u.includes('/issue/PROJ-99'))
+        return json({
+          key: 'PROJ-99',
+          fields: { summary: 'New', description: null, status: { name: 'Open' } },
+        });
+      return new Response('nope', { status: 404 });
+    }) as typeof fetch;
+    try {
+      const jira = jiraModule.create(
+        cfg({
+          baseUrl: 'https://jira.example.com',
+          projectRef: 'PROJ',
+          username: 'me',
+          password: 'pw',
+          token: null,
+        }),
+      );
+      const meta = await jira.createMeta();
+      expect(meta.issueTypes.map((t) => t.name)).toEqual(['Task']);
+      const team = meta.issueTypes[0]!.fields.find((f) => f.key === 'customfield_10100')!;
+      expect(team).toMatchObject({
+        required: true,
+        type: 'select',
+        allowedValues: [{ id: '55', name: 'Core' }],
+      });
+      expect(meta.issueTypes[0]!.fields.find((f) => f.key === 'reporter')?.hasDefault).toBe(true);
+      const issue = await jira.createIssue({
+        title: 'New',
+        body: '## Goal\n- do it',
+        issueTypeId: '1',
+        priority: 'High',
+        labels: ['bug'],
+        fields: { customfield_10100: '55' },
+      });
+      expect(issue.externalId).toBe('PROJ-99');
+      const post = calls.find((c) => c.url.endsWith('/issue') && c.init.method === 'POST')!;
+      expect(JSON.parse(String(post.init.body))).toEqual({
+        fields: {
+          project: { key: 'PROJ' },
+          issuetype: { id: '1' },
+          summary: 'New',
+          description: 'h2. Goal\n* do it',
+          priority: { name: 'High' },
+          labels: ['bug'],
+          customfield_10100: { id: '55' },
+        },
+      });
+    } finally {
+      globalThis.fetch = original;
+    }
+    expect(markdownToJiraWiki('# T\n\n1. a\n- b\n**bold** `x` [l](https://u)\n```js\ncode\n```')).toBe(
+      'h1. T\n\n# a\n* b\n*bold* {{x}} [l|https://u]\n{code:js}\ncode\n{code}',
+    );
   });
 
   it('maps statuses ↔ columns and classifies labels', () => {

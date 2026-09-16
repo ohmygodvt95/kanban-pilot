@@ -55,6 +55,11 @@ export class IssueService {
     }
   }
 
+  /** Push the task's current column to its (freshly linked) issue. */
+  async syncNow(task: Task): Promise<void> {
+    await this.syncTask({ column: task.column === 'backlog' ? 'todo' : 'backlog' }, task);
+  }
+
   /** Column a freshly imported issue lands in; done/doing/review states are not imported as such. */
   static importColumn(map: Parameters<typeof columnForStatus>[0], status: string | null): Column | 'skip' {
     const mapped = columnForStatus(map, status);

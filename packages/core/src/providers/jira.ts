@@ -1,6 +1,6 @@
-import type { Column, TaskKind, TaskPriority } from '@agent-kanban/shared';
+import type { Column, CreateMeta, RemoteField, TaskKind, TaskPriority } from '@agent-kanban/shared';
 import type { ExternalIssue, IssueProvider, ProviderConfig, ProviderModule, SyncContext } from './types.js';
-import { classifyLabels, HttpError, jsonRequest } from './types.js';
+import { type CreateIssueInput, classifyLabels, HttpError, jsonRequest } from './types.js';
 
 /**
  * Jira Server / Data Center 8.x (self-hosted) over REST API v2. Two auth modes:
@@ -194,6 +194,107 @@ class JiraProvider implements IssueProvider {
       body: JSON.stringify({ body }),
     });
   }
+
+  /** Issue types of the project with their fields (`createmeta`, expanded). */
+  async createMeta(): Promise<CreateMeta> {
+    const meta = await this.request<{ projects: { issuetypes: JiraIssueType[] }[] }>(
+      `/issue/createmeta?projectKeys=${encodeURIComponent(this.cfg.projectRef)}&expand=projects.issuetypes.fields`,
+    );
+    const types = meta.projects[0]?.issuetypes ?? [];
+    return {
+      issueTypes: types
+        .filter((t) => !t.subtask)
+        .map((t) => ({
+          id: t.id,
+          name: t.name,
+          fields: Object.entries(t.fields ?? {})
+            .map(([key, f]) => JiraProvider.toRemoteField(key, f))
+            .filter((f) => !['project', 'issuetype'].includes(f.key)),
+        })),
+    };
+  }
+
+  /** Normalise Jira's field schema into the UI-facing RemoteField. */
+  private static toRemoteField(key: string, f: JiraFieldMeta): RemoteField {
+    const schema = f.schema ?? {};
+    let type: RemoteField['type'] = 'unknown';
+    if (schema.type === 'string') type = schema.custom?.endsWith(':textarea') ? 'text' : 'string';
+    else if (schema.type === 'number') type = 'number';
+    else if (schema.type === 'date' || schema.type === 'datetime') type = 'date';
+    else if (schema.type === 'user') type = 'user';
+    else if (schema.type === 'array') type = schema.items === 'string' ? 'labels' : 'multiselect';
+    else if (f.allowedValues?.length) type = 'select';
+    if (key === 'summary') type = 'string';
+    if (key === 'description') type = 'text';
+    const allowed = f.allowedValues?.map((v) => ({
+      id: String(v.id ?? v.name ?? v.value),
+      name: String(v.name ?? v.value ?? v.id),
+    }));
+    return {
+      key,
+      name: f.name ?? key,
+      required: !!f.required,
+      type,
+      ...(allowed?.length ? { allowedValues: allowed } : {}),
+      // Jira fills these itself
+      hasDefault:
+        key === 'reporter' || key === 'project' || key === 'issuetype' || f.hasDefaultValue === true,
+    };
+  }
+
+  /** Format a value for Jira's create payload according to the field's schema. */
+  private static formatFieldValue(field: RemoteField | undefined, value: unknown): unknown {
+    if (value === null || value === undefined || value === '') return undefined;
+    switch (field?.type) {
+      case 'select':
+        return typeof value === 'object' ? value : { id: String(value) };
+      case 'multiselect':
+        return (Array.isArray(value) ? value : [value]).map((v) =>
+          typeof v === 'object' ? v : { id: String(v) },
+        );
+      case 'labels':
+        return Array.isArray(value)
+          ? value.map(String)
+          : String(value)
+              .split(',')
+              .map((v) => v.trim())
+              .filter(Boolean);
+      case 'user':
+        return typeof value === 'object' ? value : { name: String(value) };
+      case 'number':
+        return Number(value);
+      default:
+        return value;
+    }
+  }
+
+  async createIssue(input: CreateIssueInput) {
+    const meta = await this.createMeta();
+    const type =
+      meta.issueTypes.find((t) => t.id === input.issueTypeId) ??
+      meta.issueTypes.find((t) => /task/i.test(t.name)) ??
+      meta.issueTypes[0];
+    if (!type) throw new Error('the Jira project has no issue types available to this user');
+    const byKey = new Map(type.fields.map((f) => [f.key, f]));
+    const fields: Record<string, unknown> = {
+      project: { key: this.cfg.projectRef },
+      issuetype: { id: type.id },
+      summary: input.title,
+      description: markdownToJiraWiki(input.body),
+    };
+    if (input.priority && byKey.has('priority')) fields.priority = { name: input.priority };
+    if (input.labels?.length && byKey.has('labels')) fields.labels = input.labels;
+    for (const [key, raw] of Object.entries(input.fields ?? {})) {
+      if (key in fields || !byKey.has(key)) continue;
+      const v = JiraProvider.formatFieldValue(byKey.get(key), raw);
+      if (v !== undefined) fields[key] = v;
+    }
+    const created = await this.request<{ key: string }>('/issue', {
+      method: 'POST',
+      body: JSON.stringify({ fields }),
+    });
+    return this.getIssue(created.key);
+  }
 }
 
 /**
@@ -230,6 +331,39 @@ export function jiraWikiToMarkdown(text: string): string {
     .replace(/(^|\s)_([^_\n]+)_(?=\s|$|[.,;:])/g, '$1*$2*')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** Reverse of `jiraWikiToMarkdown` for descriptions we write to Jira (best effort). */
+export function markdownToJiraWiki(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(
+      /```(\w+)?\n([\s\S]*?)```/g,
+      (_m, lang: string | undefined, body: string) =>
+        `{code${lang ? `:${lang}` : ''}}\n${body.trim()}\n{code}`,
+    )
+    .replace(/^(#{1,6})\s+(.*)$/gm, (_m, hashes: string, title: string) => `h${hashes.length}. ${title}`)
+    .replace(/^[ \t]*\d+\.[ \t]+/gm, '# ')
+    .replace(/^[ \t]*[-*][ \t]+/gm, '* ')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '[$1|$2]')
+    .replace(/\*\*([^*\n]+)\*\*/g, '*$1*')
+    .replace(/`([^`\n]+)`/g, '{{$1}}')
+    .trim();
+}
+
+interface JiraFieldMeta {
+  name?: string;
+  required?: boolean;
+  hasDefaultValue?: boolean;
+  schema?: { type?: string; items?: string; custom?: string };
+  allowedValues?: { id?: string | number; name?: string; value?: string }[];
+}
+
+interface JiraIssueType {
+  id: string;
+  name: string;
+  subtask?: boolean;
+  fields?: Record<string, JiraFieldMeta>;
 }
 
 interface JiraIssue {

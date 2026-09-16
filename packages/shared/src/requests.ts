@@ -126,8 +126,24 @@ export const integrationInputSchema = z.object({
   sync_status: z.boolean().optional(),
   sync_comments: z.boolean().optional(),
   poll_interval_seconds: z.number().int().min(10).max(3600).optional(),
+  push_defaults: z
+    .object({
+      issue_type_by_kind: z.record(z.string(), z.string().nullable()).optional(),
+      priority_map: z.record(z.string(), z.string().nullable()).optional(),
+      fields: z.record(z.string(), z.unknown()).optional(),
+    })
+    .optional(),
+  push_on_todo: z.boolean().optional(),
 });
 export type IntegrationInput = z.infer<typeof integrationInputSchema>;
+
+/** POST /tasks/:id/push — create the task on the linked tracker. Missing required fields → 409 CONFIRM_REQUIRED. */
+export const pushTaskSchema = z.object({
+  issue_type_id: z.string().nullable().optional(),
+  /** Values for remote fields the user was asked for (keyed by remote field key). */
+  fields: z.record(z.string(), z.unknown()).optional(),
+});
+export type PushTaskInput = z.infer<typeof pushTaskSchema>;
 
 export const importIssuesSchema = z.object({
   /** External ids (issue numbers) to import as tasks. */

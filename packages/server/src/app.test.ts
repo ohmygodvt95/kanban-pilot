@@ -325,6 +325,29 @@ describe('HTTP API', () => {
     expect(await json<unknown>(await app.request(`/api/projects/${project.id}/integration`))).toBeNull();
   });
 
+  it('pushes a local task to the tracker via the API', async () => {
+    await app.request(`/api/projects/${project.id}/integration`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'github', project_ref: 'acme/app', token: 't' }),
+    });
+    const meta = await json<{ issueTypes: { id: string }[] }>(
+      await app.request(`/api/projects/${project.id}/integration/create-meta`),
+    );
+    expect(meta.issueTypes.map((t) => t.id)).toEqual(['10001', '10004']);
+    const t = await json<Task>(
+      await post(`/api/projects/${project.id}/tasks`, { title: 'push me', description: 'x' }),
+    );
+    const ask = await post(`/api/tasks/${t.id}/push`, {});
+    expect(ask.status).toBe(409);
+    const body = await json<{ error: { code: string; details: { missing: { key: string }[] } } }>(ask);
+    expect(body.error.code).toBe('CONFIRM_REQUIRED');
+    expect(body.error.details.missing[0]?.key).toBe('components');
+    const ok = await json<Task>(await post(`/api/tasks/${t.id}/push`, { fields: { components: 'c2' } }));
+    expect(ok.source_external_id).toMatch(/^NEW-/);
+    await app.request(`/api/projects/${project.id}/integration`, { method: 'DELETE' });
+  });
+
   it('bulk-deletes the tasks of a project', async () => {
     await post(`/api/projects/${project.id}/tasks`, { title: 'a', description: 'x' });
     await post(`/api/projects/${project.id}/tasks`, { title: 'b', description: 'x' });

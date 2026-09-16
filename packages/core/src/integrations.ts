@@ -2,7 +2,13 @@
  * Tracker connections (one per project): CRUD with secret retention, connection
  * tests, remote status discovery and form prefill from the origin remote.
  */
-import type { Integration, ProviderId, ProviderModuleInfo, StatusMap } from '@agent-kanban/shared';
+import type {
+  CreateMeta,
+  Integration,
+  ProviderId,
+  ProviderModuleInfo,
+  StatusMap,
+} from '@agent-kanban/shared';
 import { COLUMNS } from '@agent-kanban/shared';
 import type { CoreContext } from './context.js';
 import { remoteUrl } from './git/git.js';
@@ -29,6 +35,12 @@ export interface IntegrationInput {
   sync_status?: boolean;
   sync_comments?: boolean;
   poll_interval_seconds?: number;
+  push_defaults?: {
+    issue_type_by_kind?: Record<string, string | null>;
+    priority_map?: Record<string, string | null>;
+    fields?: Record<string, unknown>;
+  };
+  push_on_todo?: boolean;
 }
 
 export class IntegrationService {
@@ -83,10 +95,24 @@ export class IntegrationService {
       sync_status: input.sync_status ?? existing?.sync_status ?? true,
       sync_comments: input.sync_comments ?? existing?.sync_comments ?? true,
       poll_interval_seconds: input.poll_interval_seconds ?? existing?.poll_interval_seconds ?? 30,
+      push_defaults: {
+        issue_type_by_kind:
+          input.push_defaults?.issue_type_by_kind ?? existing?.push_defaults.issue_type_by_kind ?? {},
+        priority_map: input.push_defaults?.priority_map ?? existing?.push_defaults.priority_map ?? {},
+        fields: input.push_defaults?.fields ?? existing?.push_defaults.fields ?? {},
+      },
+      push_on_todo: input.push_on_todo ?? existing?.push_on_todo ?? false,
       last_polled_at: null,
       last_error: null,
     });
     return toPublicIntegration(row);
+  }
+
+  /** Issue types + fields the tracker needs when creating an issue. */
+  async createMeta(projectId: string): Promise<CreateMeta> {
+    const p = await this.provider(projectId);
+    if (!p) throw new CoreError('CONFLICT', 'no tracker configured for this project');
+    return p.provider.createMeta();
   }
 
   async remove(projectId: string): Promise<void> {
@@ -115,6 +141,7 @@ export class IntegrationService {
       },
       import_filter: input.import_filter?.trim() || null,
       status_map: normalizeStatusMap(input.status_map ?? this.module(input.provider).info.defaultStatusMap),
+      push_defaults: { issue_type_by_kind: {}, priority_map: {}, fields: {} },
     });
     return provider.check();
   }

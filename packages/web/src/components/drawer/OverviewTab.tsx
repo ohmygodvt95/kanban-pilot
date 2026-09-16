@@ -17,21 +17,25 @@ import {
   Square,
   Trash2,
   Undo2,
+  Upload,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import Markdown from 'react-markdown';
 import { ApiError, api } from '../../api/client';
-import { keys, upsertTask } from '../../api/queries';
+import { keys, upsertTask, useProvider } from '../../api/queries';
 import { formatCost, formatTime } from '../../lib/format';
 import { EXECUTOR_LABELS, isBusy } from '../../lib/state';
 import { KIND_LABELS, PRIORITY_LABELS } from '../../lib/taskmeta';
 import { Button, Card, Field, inputClass, KeyValue, Switch, useConfirm } from '../ui';
 import { useToast } from '../ui/Toast';
+import { type PushRequest, PushToTrackerModal } from './PushToTrackerModal';
 
 export function OverviewTab({ task, project }: { task: TaskDetail; project: Project }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
+  const provider = useProvider(project.id);
+  const [pushRequest, setPushRequest] = useState<PushRequest | null>(null);
   const busy = isBusy(task);
   const activeRun = task.runs.find((r) => r.status === 'running' || r.status === 'queued');
   const [editing, setEditing] = useState(false);
@@ -101,6 +105,14 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
   return (
     <div className="grid gap-4 p-4 text-sm">
       {confirmNode}
+      {pushRequest && provider.data ? (
+        <PushToTrackerModal
+          task={task}
+          request={pushRequest}
+          providerName={provider.data.id}
+          onClose={() => setPushRequest(null)}
+        />
+      ) : null}
       {task.last_error ? (
         <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800 text-xs dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
@@ -118,6 +130,19 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
         transition={transition}
         confirm={confirm}
         pending={act.isPending}
+        trackerName={
+          provider.data?.ok && !task.source_external_id && task.column !== 'done' ? provider.data.id : null
+        }
+        onPush={async () => {
+          try {
+            upsertTask(qc, await api.tasks.push(task.id, {}));
+            toast.push({ kind: 'success', text: `Created on ${provider.data?.id}` });
+          } catch (err) {
+            if (err instanceof ApiError && err.code === 'CONFIRM_REQUIRED')
+              setPushRequest(err.details as PushRequest);
+            else toast.error(err, 'Push failed');
+          }
+        }}
       />
 
       {task.column === 'backlog' && task.substate === 'needs_answer' && openQuestions.length ? (
@@ -489,6 +514,8 @@ function Actions({
   confirm,
   pending,
   toast,
+  trackerName,
+  onPush,
 }: {
   task: TaskDetail;
   project: Project;
@@ -504,6 +531,9 @@ function Actions({
   }) => Promise<boolean>;
   pending: boolean;
   toast: ReturnType<typeof useToast>;
+  /** Name of the linked tracker when the task can be pushed there, else null. */
+  trackerName: string | null;
+  onPush: () => void;
 }) {
   const buttons: {
     label: string;

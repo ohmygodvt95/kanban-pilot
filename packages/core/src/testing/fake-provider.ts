@@ -1,5 +1,6 @@
 import type { Column } from '@agent-kanban/shared';
 import type {
+  CreateIssueInput,
   ExternalIssue,
   IssueProvider,
   ProviderConfig,
@@ -50,6 +51,58 @@ export class FakeIssueProvider implements IssueProvider {
   async createPullRequest(input: PullRequestInput): Promise<string> {
     this.prs.push(input);
     return `https://fake-tracker/pr/${this.prs.length}`;
+  }
+  /** A Jira-like type with a required select field, plus a plain one. */
+  async createMeta() {
+    return {
+      issueTypes: [
+        {
+          id: '10001',
+          name: 'Task',
+          fields: [
+            { key: 'summary', name: 'Summary', required: true, type: 'string' as const },
+            { key: 'description', name: 'Description', required: false, type: 'text' as const },
+            {
+              key: 'priority',
+              name: 'Priority',
+              required: false,
+              type: 'select' as const,
+              allowedValues: [{ id: '1', name: 'High' }],
+            },
+            {
+              key: 'components',
+              name: 'Component',
+              required: true,
+              type: 'select' as const,
+              allowedValues: [
+                { id: 'c1', name: 'Backend' },
+                { id: 'c2', name: 'Web' },
+              ],
+            },
+            { key: 'reporter', name: 'Reporter', required: true, type: 'user' as const, hasDefault: true },
+          ],
+        },
+        {
+          id: '10004',
+          name: 'Bug',
+          fields: [{ key: 'summary', name: 'Summary', required: true, type: 'string' as const }],
+        },
+      ],
+    };
+  }
+  readonly created: CreateIssueInput[] = [];
+  async createIssue(input: CreateIssueInput): Promise<ExternalIssue> {
+    this.created.push(input);
+    const issue: ExternalIssue = {
+      externalId: `NEW-${this.created.length}`,
+      url: `https://fake-tracker/NEW-${this.created.length}`,
+      title: input.title,
+      body: input.body,
+      labels: input.labels ?? [],
+      status: 'Backlog',
+    };
+    this.issues.push(issue);
+    return issue;
   }
 }
 

@@ -3,6 +3,7 @@ import {
   answerQuestionSchema,
   chatMessageSchema,
   createCommentSchema,
+  pushTaskSchema,
   transitionRequestSchema,
   updateTaskSchema,
 } from '@agent-kanban/shared';
@@ -51,6 +52,17 @@ export function taskRoutes(core: Core) {
     const parsed = chatMessageSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json(errorBody('VALIDATION', 'invalid request', parsed.error.issues), 400);
     return c.json(await core.tasks.chat(c.req.param('id'), parsed.data.message));
+  });
+
+  /** Create the task on the linked tracker; 409 CONFIRM_REQUIRED lists missing required fields. */
+  app.post('/:id/push', zValidator('json', pushTaskSchema), async (c) => {
+    const input = c.req.valid('json');
+    return c.json(
+      await core.tasks.pushToTracker(c.req.param('id'), {
+        issueTypeId: input.issue_type_id ?? null,
+        fields: input.fields,
+      }),
+    );
   });
 
   app.post('/:id/clone', async (c) => c.json(await core.tasks.clone(c.req.param('id')), 201));
