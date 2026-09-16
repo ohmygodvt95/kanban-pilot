@@ -1,9 +1,9 @@
 import type { ExecutorId, Project, UpdateProjectInput } from '@agent-kanban/shared';
 import { EXECUTOR_IDS } from '@agent-kanban/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { keys, useProject, useProvider } from '../api/queries';
 import { Shell } from '../components/Shell';
@@ -111,10 +111,16 @@ function SettingsForm({ project }: { project: Project }) {
   return (
     <div className="mx-auto max-w-3xl p-6">
       {confirmNode}
-      <div className="mb-5 flex items-end justify-between">
-        <div>
-          <h1 className="font-semibold text-2xl tracking-tight">Settings</h1>
-          <p className="font-mono text-xs text-zinc-500">{project.repo_path}</p>
+      <div className="mb-5 flex items-end justify-between gap-4">
+        <div className="min-w-0">
+          <Link
+            to={`/p/${project.id}`}
+            className="mb-1 inline-flex items-center gap-1 text-accent-600 text-xs hover:underline dark:text-accent-300"
+          >
+            <ArrowLeft size={12} /> Back to board
+          </Link>
+          <h1 className="font-semibold text-2xl tracking-tight">Settings · {project.name}</h1>
+          <p className="truncate font-mono text-xs text-zinc-500">{project.repo_path}</p>
         </div>
         <Button
           variant="primary"

@@ -1,6 +1,6 @@
-import { Bell, BellOff, ChevronDown, Settings, Wifi, WifiOff } from 'lucide-react';
+import { Bell, BellOff, ChevronDown, LayoutDashboard, Settings, Wifi, WifiOff } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useProjects } from '../api/queries';
 import { notificationsEnabled, notificationsSupported, setNotificationsEnabled } from '../lib/notify';
 import { IconButton } from './ui';
@@ -59,6 +59,8 @@ export function Shell({
 }) {
   const projects = useProjects();
   const navigate = useNavigate();
+  const location = useLocation();
+  const onSettings = location.pathname.endsWith('/settings');
   const current = projects.data?.find((p) => p.id === projectId);
   return (
     <div className="flex h-full flex-col">
@@ -113,11 +115,19 @@ export function Shell({
         {right}
         <NotificationToggle />
         {projectId ? (
-          <Link to={`/p/${projectId}/settings`}>
-            <IconButton label="Project settings">
-              <Settings size={16} />
-            </IconButton>
-          </Link>
+          onSettings ? (
+            <Link to={`/p/${projectId}`}>
+              <IconButton label="Back to the board">
+                <LayoutDashboard size={16} />
+              </IconButton>
+            </Link>
+          ) : (
+            <Link to={`/p/${projectId}/settings`}>
+              <IconButton label="Project settings">
+                <Settings size={16} />
+              </IconButton>
+            </Link>
+          )
         ) : null}
       </header>
       <main className="min-h-0 flex-1">{children}</main>
