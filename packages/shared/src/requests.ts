@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { statusMapSchema } from './entities.js';
 import {
   columnSchema,
   commentKindSchema,
@@ -37,10 +38,6 @@ const projectFieldsSchema = z.object({
   done_action: doneActionSchema.optional(),
   auto_start: z.boolean().optional(),
   browser_enabled: z.boolean().optional(),
-  issue_sync: z.boolean().optional(),
-  issue_import_labels: z.string().max(500).nullable().optional(),
-  issue_provider: providerIdSchema.nullable().optional(),
-  issue_project_ref: z.string().max(300).nullable().optional(),
 });
 
 export const createProjectSchema = projectFieldsSchema.extend({
@@ -115,6 +112,22 @@ export type ChatMessageInput = z.infer<typeof chatMessageSchema>;
 
 export const answerQuestionSchema = z.object({ answer: z.string().min(1) });
 export type AnswerQuestionInput = z.infer<typeof answerQuestionSchema>;
+
+/** Create or update the project's tracker connection. Empty token/password keeps the stored secret. */
+export const integrationInputSchema = z.object({
+  provider: providerIdSchema,
+  base_url: z.string().max(500).nullable().optional(),
+  project_ref: z.string().min(1).max(300),
+  username: z.string().max(200).nullable().optional(),
+  token: z.string().max(2000).nullable().optional(),
+  password: z.string().max(2000).nullable().optional(),
+  import_filter: z.string().max(2000).nullable().optional(),
+  status_map: statusMapSchema.optional(),
+  sync_status: z.boolean().optional(),
+  sync_comments: z.boolean().optional(),
+  poll_interval_seconds: z.number().int().min(10).max(3600).optional(),
+});
+export type IntegrationInput = z.infer<typeof integrationInputSchema>;
 
 export const importIssuesSchema = z.object({
   /** External ids (issue numbers) to import as tasks. */

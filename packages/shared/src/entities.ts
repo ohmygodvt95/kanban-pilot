@@ -47,13 +47,6 @@ export const projectSchema = z.object({
   auto_start: z.boolean(),
   /** Let the agent drive a browser (Claude in Chrome: `claude --chrome`). */
   browser_enabled: z.boolean(),
-  /** Post status comments to (and close) linked issues as tasks move. */
-  issue_sync: z.boolean(),
-  /** Comma-separated labels; open issues carrying one of them are imported automatically. */
-  issue_import_labels: nullableString,
-  /** Manual tracker link when the origin remote is not the tracker (or there is none). */
-  issue_provider: providerIdSchema.nullable(),
-  issue_project_ref: nullableString,
   created_at: isoDate,
   updated_at: isoDate,
 });
@@ -244,10 +237,64 @@ export const providerStatusSchema = z.object({
   id: providerIdSchema,
   ok: z.boolean(),
   message: z.string().optional(),
-  /** e.g. "owner/repo" detected from the origin remote. */
+  /** e.g. "owner/repo" (GitHub), project URL (GitLab) or project key (Jira). */
   projectRef: z.string().nullable(),
 });
 export type ProviderStatus = z.infer<typeof providerStatusSchema>;
+
+/** Which remote statuses correspond to each kanban column (first entry is written back on sync). */
+export const statusMapSchema = z.record(columnSchema, z.array(z.string()));
+export type StatusMap = z.infer<typeof statusMapSchema>;
+
+/**
+ * Tracker connection of a project (one per project). Secrets are never returned
+ * by the API: `auth` only says what is configured.
+ */
+export const integrationSchema = z.object({
+  id: z.string(),
+  project_id: z.string(),
+  provider: providerIdSchema,
+  /** API/base URL for self-hosted instances (GitLab, Jira); null = provider default. */
+  base_url: nullableString,
+  /** GitHub "owner/repo", GitLab project path, Jira project key. */
+  project_ref: z.string(),
+  auth: z.object({ username: nullableString, has_token: z.boolean(), has_password: z.boolean() }),
+  /** Provider-specific import filter: labels (GitHub/GitLab) or JQL (Jira). */
+  import_filter: nullableString,
+  status_map: statusMapSchema,
+  /** Write task milestones back as remote statuses (transitions / labels). */
+  sync_status: z.boolean(),
+  /** Also leave a short comment on the issue at each milestone. */
+  sync_comments: z.boolean(),
+  poll_interval_seconds: z.number().int(),
+  last_polled_at: nullableString,
+  last_error: nullableString,
+  created_at: isoDate,
+  updated_at: isoDate,
+});
+export type Integration = z.infer<typeof integrationSchema>;
+
+/** One configurable field of a provider module (drives the settings form). */
+export const providerFieldSchema = z.object({
+  key: z.enum(['base_url', 'project_ref', 'username', 'token', 'password', 'import_filter']),
+  label: z.string(),
+  type: z.enum(['text', 'url', 'password', 'textarea']),
+  placeholder: z.string().optional(),
+  help: z.string().optional(),
+  required: z.boolean().optional(),
+});
+export const providerModuleInfoSchema = z.object({
+  id: providerIdSchema,
+  displayName: z.string(),
+  description: z.string(),
+  fields: z.array(providerFieldSchema),
+  /** Whether statuses are workflow states (Jira) or labels (GitHub/GitLab). */
+  statusModel: z.enum(['workflow', 'labels']),
+  supportsPullRequests: z.boolean(),
+  /** Suggested status map for a fresh integration. */
+  defaultStatusMap: statusMapSchema,
+});
+export type ProviderModuleInfo = z.infer<typeof providerModuleInfoSchema>;
 
 export const executorStatusSchema = z.object({
   id: executorIdSchema,

@@ -89,7 +89,6 @@ export class AttemptService {
     attempt: Attempt,
     project: Project,
     provider: IssueProvider,
-    projectRef: string,
   ): Promise<Attempt> {
     if (attempt.status !== 'active')
       throw new CoreError('CONFLICT', `attempt ${attempt.id} is ${attempt.status}`);
@@ -100,7 +99,7 @@ export class AttemptService {
     const body = `${task.description}\n\n---\nCreated by agent-kanban · task ${task.id} · attempt ${attempt.id}${
       task.source_url ? `\nCloses ${task.source_url}` : ''
     }`;
-    const url = await provider.createPullRequest(projectRef, {
+    const url = await provider.createPullRequest({
       head: attempt.branch,
       base: project.base_branch,
       title: task.title,

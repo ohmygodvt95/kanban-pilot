@@ -1,2 +1,2 @@
 export { FakeClaudeAdapter } from './fake-executor.js';
-export { FakeIssueProvider } from './fake-provider.js';
+export { FakeIssueProvider, fakeProviderModule } from './fake-provider.js';

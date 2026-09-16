@@ -1,15 +1,16 @@
 /**
- * Issue tracker glue: resolves the provider of a project, mirrors task
- * milestones onto linked issues (best-effort, never blocks a transition) and
- * imports issues carrying the configured labels on a timer.
+ * Issue tracker glue: mirrors task column changes onto linked issues through the
+ * project's status map (best-effort, never blocks a transition) and imports new
+ * issues on each integration's poll interval (default 30 s).
  */
-import type { Project, Task } from '@agent-kanban/shared';
+import type { Column, Task } from '@agent-kanban/shared';
 import type { CoreContext } from './context.js';
-import { remoteUrl } from './git/git.js';
-import { type DetectedProvider, detectProvider, type IssueStatus } from './providers/index.js';
+import type { IntegrationService } from './integrations.js';
+import { columnForStatus, type SyncContext, statusComment, statusForColumn } from './providers/index.js';
 import { errorMessage } from './util/errors.js';
 
 export interface IssueSyncDeps {
+  integrations: () => IntegrationService;
   /** Creates backlog tasks from external ids; provided by ProjectService. */
   importIssues(projectId: string, externalIds: string[]): Promise<Task[]>;
 }
@@ -20,43 +21,32 @@ export class IssueService {
     private readonly deps: IssueSyncDeps,
   ) {}
 
-  /** Provider for a project: manual link first, else the origin remote. */
-  async detect(project: Project): Promise<DetectedProvider | null> {
-    return detectProvider(this.ctx.providers, await remoteUrl(project.repo_path), {
-      provider: project.issue_provider,
-      projectRef: project.issue_project_ref,
-    });
-  }
-
-  /** Milestone reached by a task (called by TaskService after a column change). */
-  statusFor(prev: Pick<Task, 'column'>, next: Pick<Task, 'column'>): IssueStatus | null {
-    if (prev.column === next.column) return null;
-    if (next.column === 'doing' && prev.column === 'todo') return 'in_progress';
-    if (next.column === 'review' && prev.column === 'doing') return 'in_review';
-    if (next.column === 'done') return 'done';
-    return null;
-  }
-
   /**
-   * Post the milestone on the linked issue. Errors are logged and stored on the
-   * task's `last_error` so the user notices, but the transition itself is never rolled back.
+   * Push the new column to the linked issue: remote status from the status map
+   * (if `sync_status`) and a short comment (if `sync_comments`). Errors are logged
+   * and surfaced on the task's `last_error`; the transition itself never rolls back.
    */
-  async syncTask(task: Task, status: IssueStatus): Promise<void> {
-    if (!task.source_external_id || !task.source_provider) return;
-    const project = await this.ctx.store.getProject(task.project_id);
-    if (!project.issue_sync) return;
-    const detected = await this.detect(project);
-    if (!detected || detected.provider.id !== task.source_provider) return;
+  async syncTask(prev: Pick<Task, 'column'>, task: Task): Promise<void> {
+    if (prev.column === task.column || !task.source_external_id || !task.source_provider) return;
+    const link = await this.deps.integrations().provider(task.project_id);
+    if (!link || link.row.provider !== task.source_provider) return;
     const attempt = task.current_attempt_id
       ? await this.ctx.store.findAttempt(task.current_attempt_id)
       : null;
+    const ctx: SyncContext = {
+      column: task.column,
+      branch: attempt?.branch ?? null,
+      prUrl: attempt?.pr_url ?? null,
+      taskTitle: task.title,
+    };
     try {
-      await detected.provider.syncStatus(task.source_external_id, status, {
-        branch: attempt?.branch ?? null,
-        prUrl: attempt?.pr_url ?? null,
-        taskTitle: task.title,
-      });
-      this.ctx.logger.info({ task: task.id, issue: task.source_external_id, status }, 'issue status synced');
+      const remote = statusForColumn(link.row.status_map, task.column);
+      if (link.row.sync_status && remote) await link.provider.setStatus(task.source_external_id, remote, ctx);
+      if (link.row.sync_comments) await link.provider.addComment(task.source_external_id, statusComment(ctx));
+      this.ctx.logger.info(
+        { task: task.id, issue: task.source_external_id, column: task.column, remote },
+        'issue synced',
+      );
     } catch (err) {
       this.ctx.logger.warn({ task: task.id, err: errorMessage(err) }, 'issue sync failed');
       await this.ctx.store
@@ -65,36 +55,66 @@ export class IssueService {
     }
   }
 
-  /** Import open issues with the project's `issue_import_labels` that are not tasks yet. */
-  async pollProject(project: Project): Promise<number> {
-    const labels = (project.issue_import_labels ?? '')
-      .split(',')
-      .map((l) => l.trim())
-      .filter(Boolean);
-    if (labels.length === 0) return 0;
-    const detected = await this.detect(project);
-    if (!detected || !(await detected.provider.check()).ok) return 0;
-    const existing = new Set(
-      (await this.ctx.store.listTasks(project.id)).map((t) => t.source_external_id).filter(Boolean),
-    );
-    const issues = await detected.provider.listIssues(detected.projectRef, { labels });
-    const fresh = issues.filter((i) => !existing.has(i.externalId)).map((i) => i.externalId);
-    if (fresh.length === 0) return 0;
-    const created = await this.deps.importIssues(project.id, fresh);
-    this.ctx.logger.info({ project: project.id, imported: created.length, labels }, 'imported issues');
-    return created.length;
+  /** Column a freshly imported issue lands in; done/doing/review states are not imported as such. */
+  static importColumn(map: Parameters<typeof columnForStatus>[0], status: string | null): Column | 'skip' {
+    const mapped = columnForStatus(map, status);
+    if (mapped === 'done') return 'skip';
+    if (mapped === 'doing' || mapped === 'review') return 'todo';
+    return mapped ?? 'backlog';
   }
 
-  /** One pass over all projects (timer + start). */
+  /** Import issues matching the integration's filter that are not tasks yet. */
+  async pollProject(projectId: string): Promise<number> {
+    const link = await this.deps.integrations().provider(projectId);
+    if (!link) return 0;
+    try {
+      const existing = new Set(
+        (await this.ctx.store.listTasks(projectId)).map((t) => t.source_external_id).filter(Boolean),
+      );
+      const issues = await link.provider.listIssues();
+      const fresh = issues.filter(
+        (i) =>
+          !existing.has(i.externalId) && IssueService.importColumn(link.row.status_map, i.status) !== 'skip',
+      );
+      const created = fresh.length
+        ? await this.deps.importIssues(
+            projectId,
+            fresh.map((i) => i.externalId),
+          )
+        : [];
+      await this.ctx.store.updateIntegration(link.row.id, {
+        last_polled_at: new Date().toISOString(),
+        last_error: null,
+      });
+      if (created.length)
+        this.ctx.logger.info({ project: projectId, imported: created.length }, 'imported issues');
+      return created.length;
+    } catch (err) {
+      await this.ctx.store.updateIntegration(link.row.id, {
+        last_polled_at: new Date().toISOString(),
+        last_error: errorMessage(err),
+      });
+      this.ctx.logger.warn({ project: projectId, err: errorMessage(err) }, 'issue import failed');
+      return 0;
+    }
+  }
+
+  /** Poll every integration whose interval elapsed (called by a 10 s ticker and on start). */
+  async pollDue(now = Date.now()): Promise<number> {
+    let total = 0;
+    for (const row of await this.ctx.store.listIntegrations()) {
+      const last = row.last_polled_at ? Date.parse(row.last_polled_at) : 0;
+      if (now - last < row.poll_interval_seconds * 1000) continue;
+      total += await this.pollProject(row.project_id);
+    }
+    return total;
+  }
+
+  /** Force a poll of every integration (tests, "Fetch now"). */
   async pollAll(): Promise<number> {
     let total = 0;
-    for (const project of await this.ctx.store.listProjects()) {
-      try {
-        total += await this.pollProject(project);
-      } catch (err) {
-        this.ctx.logger.warn({ project: project.id, err: errorMessage(err) }, 'issue import failed');
-      }
-    }
+    for (const row of await this.ctx.store.listIntegrations())
+      total += await this.pollProject(row.project_id);
     return total;
   }
 }

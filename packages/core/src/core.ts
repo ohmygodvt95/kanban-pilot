@@ -12,6 +12,7 @@ import { runMigrations } from './db/migrate.js';
 import { EventBus } from './events/bus.js';
 import { createDefaultRegistry, type ExecutorRegistry } from './executors/registry.js';
 import { listWorktrees, pruneWorktrees } from './git/git.js';
+import { IntegrationService } from './integrations.js';
 import { IssueService } from './issues.js';
 import { PostRunPipeline } from './postrun/postrun.js';
 import { ProjectService } from './projects.js';
@@ -36,7 +37,7 @@ export interface CoreOptions {
   builtinTemplatesDir?: string;
   /** Delete run event streams of DONE tasks older than this many days (0 = never). Default 30. */
   retentionDays?: number;
-  /** How often labelled issues are imported from linked trackers (0 = never). Default 5 minutes. */
+  /** Ticker checking which integrations are due for a poll (0 = never). Default 10 s. */
   issueImportIntervalMs?: number;
 }
 
@@ -52,6 +53,7 @@ export interface Core {
   refinement: RefinementService;
   runner: JobRunner;
   issues: IssueService;
+  integrations: IntegrationService;
   /** Recover state, prune old events and start the job runner. */
   start(): Promise<void>;
   /**
@@ -104,12 +106,14 @@ export function createCore(options: CoreOptions = {}): Core {
   let runner: JobRunner;
   let postRun: PostRunPipeline;
   let issues: IssueService;
+  const integrations = new IntegrationService(ctx);
   tasks = new TaskService(ctx, {
     attempts,
     runs,
     refinement: () => refinement,
     runner: () => runner,
     issues: () => issues,
+    integrations: () => integrations,
   });
   refinement = new RefinementService(ctx, { runs, tasks: () => tasks });
   postRun = new PostRunPipeline(ctx, { tasks: () => tasks, runner: () => runner, attempts, refinement });
@@ -148,9 +152,12 @@ export function createCore(options: CoreOptions = {}): Core {
   const projects = new ProjectService(
     ctx,
     () => tasks,
-    () => issues,
+    () => integrations,
   );
-  issues = new IssueService(ctx, { importIssues: (id, ids) => projects.importIssues(id, ids) });
+  issues = new IssueService(ctx, {
+    integrations: () => integrations,
+    importIssues: (id, ids) => projects.importIssues(id, ids),
+  });
 
   /** Mark attempts whose worktree vanished while the app was stopped. */
   async function reconcileWorktrees() {
@@ -185,7 +192,8 @@ export function createCore(options: CoreOptions = {}): Core {
 
   let retentionTimer: NodeJS.Timeout | null = null;
   let importTimer: NodeJS.Timeout | null = null;
-  const importIntervalMs = options.issueImportIntervalMs ?? 5 * 60_000;
+  // Integrations carry their own poll interval (default 30 s); this ticker only checks what is due.
+  const importTickMs = options.issueImportIntervalMs ?? 10_000;
   const prune = async () => {
     if (retentionDays <= 0) return 0;
     const n = await store.pruneRunEvents(retentionDays);
@@ -205,6 +213,7 @@ export function createCore(options: CoreOptions = {}): Core {
     refinement,
     runner,
     issues,
+    integrations,
     prune,
     async start() {
       const recovered = await runner.recover();
@@ -214,10 +223,10 @@ export function createCore(options: CoreOptions = {}): Core {
       await prune().catch((err) => logger.warn({ err: errorMessage(err) }, 'retention pass failed'));
       retentionTimer = setInterval(() => void prune().catch(() => {}), 24 * 3_600_000);
       retentionTimer.unref();
-      // Pull labelled issues from linked trackers now and on a timer.
-      if (importIntervalMs > 0) {
+      // Pull new issues from configured trackers now and whenever an integration's interval elapses.
+      if (importTickMs > 0) {
         void issues.pollAll().catch((err) => logger.warn({ err: errorMessage(err) }, 'issue import failed'));
-        importTimer = setInterval(() => void issues.pollAll().catch(() => {}), importIntervalMs);
+        importTimer = setInterval(() => void issues.pollDue().catch(() => {}), importTickMs);
         importTimer.unref();
       }
       runner.start();

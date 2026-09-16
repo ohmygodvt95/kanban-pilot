@@ -75,19 +75,24 @@ feedback; refine/chat: full context) and re-points consumed comments to it. `run
 4. If it cannot resume, set `supportsResume=false`; followups receive description + truncated diff + feedback.
 5. Capture a real stream fixture under `executors/__fixtures__/` and test `parseLine` against it.
 
-- **Issue sync / import** (`issues.ts`): `IssueService.detect()` resolves the tracker (manual link beats origin
-  remote). `TaskService.transition()` calls `syncTask()` fire-and-forget for TODO→DOING, DOING→REVIEW and →DONE;
-  `pollAll()` imports labelled issues on start and every `issueImportIntervalMs`. Providers map labels to
-  kind/priority via `classifyLabels()`.
+- **Trackers** (`providers/`, `integrations.ts`, `issues.ts`): a `ProviderModule` = `info` (id, form fields, default
+  status map) + `create(config)` → `IssueProvider` (`check`, `listIssues`, `getIssue`, `listStatuses`, `setStatus`,
+  `addComment`, optional `createPullRequest`). `IntegrationService` stores one row per project (`integrations`
+  table, secrets kept locally, masked in the API) and builds the provider. `IssueService.syncTask()` runs after
+  every column change: `statusForColumn(status_map)` → `setStatus` (+ comment); `pollDue()` runs from a 10 s ticker
+  and imports issues whose integration interval elapsed, placing them via `columnForStatus()` (done skipped,
+  doing/review → todo with refinement skipped).
 - **Priority queue**: `jobs.priority` is derived from the task priority; `Store.queuedJobs()` orders by priority
   then age. The runner also counts locally claimed `run_agent` jobs so `max_concurrent_runs` cannot be
   over-subscribed between ticks.
 
 ## Adding an issue provider
 
-Implement `IssueProvider` (`providers/types.ts`: `check`, `detectProjectRef`, `listIssues`, `getIssue`,
-`syncStatus`, `addComment`, optional `createPullRequest`) and register it in `createDefaultProviders()`.
-`detectProvider()` picks the provider from the origin remote URL. GitHub (REST, `GITHUB_TOKEN`) is implemented.
+Create `providers/<id>.ts` exporting a `ProviderModule`: fill `info` (display name, the fields the settings form
+should show — base_url / project_ref / username / token / password / import_filter —, `statusModel`, a default
+status map), implement `detectFromRemote()` (or return null) and `create(config)` returning an `IssueProvider`.
+Register it in `createDefaultProviders()` and add the id to `providerIdSchema` in `packages/shared`. The
+integration screen, polling and status sync need no changes. GitHub, GitLab and Jira (basic auth, REST v2) ship.
 
 ## Testing strategy
 

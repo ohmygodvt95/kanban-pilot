@@ -65,10 +65,13 @@ the main working tree of your repo is never touched by an agent.
 - **Retention.** Event streams of DONE runs older than 30 days are pruned (`--retention-days`, 0 = never); run
   metadata (cost, summary) stays. Merged attempts remain diffable via `base..branch`.
 - **Notifications.** The bell in the header enables browser notifications for Review / error / planner questions.
-- **Issue trackers (GitHub, GitLab incl. self-hosted).** Linked automatically from the origin remote, or manually in
-  Settings → Issue tracker. With `GITHUB_TOKEN`/`GH_TOKEN` or `GITLAB_TOKEN`: import open issues (Import button),
-  auto-import issues carrying configured labels every 5 minutes, mirror milestones back (comment when work starts /
-  is ready for review, close on Done) and, with `done_action = pr`, open a pull/merge request instead of merging.
+- **Issue trackers — GitHub, GitLab (self-hosted too), Jira Server/DC 8 (basic auth).** One connection per
+  project, configured on the *Integration* screen (plug icon). Each tracker is a `ProviderModule` that declares its
+  own form fields, so adding one is a single file. Credentials are stored locally in the SQLite database (GitHub/GitLab
+  tokens may also come from `GITHUB_TOKEN`/`GH_TOKEN`/`GITLAB_TOKEN`). New issues matching the import filter (labels,
+  or JQL for Jira) are pulled every 30 s (configurable), and a **status map** decides both where imported issues land
+  (which column each remote status means) and what is written back when a task moves (Jira transition or label swap,
+  plus an optional comment; Done closes GitHub/GitLab issues).
 - **Type & priority.** Tasks carry a kind (task/bug/feature/chore) and a priority (low…urgent). Leave them on
   *auto* and the planner fills them during refinement; imported issues get them from labels (`bug`, `enhancement`,
   `priority::high`, `P0`…). Urgent/high tasks run first when `max_concurrent_runs` is saturated; the board has

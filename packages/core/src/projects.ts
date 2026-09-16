@@ -10,7 +10,8 @@ import type {
 import { EXECUTOR_IDS } from '@agent-kanban/shared';
 import type { CoreContext } from './context.js';
 import { detectBaseBranch, isGitRepo, readRepoConfig, repoToplevel } from './git/git.js';
-import type { IssueService } from './issues.js';
+import type { IntegrationService } from './integrations.js';
+import { IssueService } from './issues.js';
 import type { TaskService } from './state/tasks.js';
 import { CoreError } from './util/errors.js';
 
@@ -34,10 +35,6 @@ export interface CreateProjectInput {
   done_action?: Project['done_action'];
   auto_start?: boolean;
   browser_enabled?: boolean;
-  issue_sync?: boolean;
-  issue_import_labels?: string | null;
-  issue_provider?: Project['issue_provider'];
-  issue_project_ref?: string | null;
   /** Adopt setup/test scripts found in the repo's .agent-kanban.json. */
   accept_repo_scripts?: boolean;
 }
@@ -48,7 +45,7 @@ export class ProjectService {
   constructor(
     private readonly ctx: CoreContext,
     private readonly tasks: () => TaskService,
-    private readonly issues: () => IssueService,
+    private readonly integrations: () => IntegrationService,
   ) {}
 
   list(): Promise<Project[]> {
@@ -108,10 +105,6 @@ export class ProjectService {
       done_action: input.done_action ?? 'merge',
       auto_start: input.auto_start ?? false,
       browser_enabled: input.browser_enabled ?? false,
-      issue_sync: input.issue_sync ?? true,
-      issue_import_labels: input.issue_import_labels ?? null,
-      issue_provider: input.issue_provider ?? null,
-      issue_project_ref: input.issue_project_ref ?? null,
     });
   }
 
@@ -146,62 +139,55 @@ export class ProjectService {
     );
   }
 
-  /** Which issue tracker is linked (manual link or origin remote), and whether it is usable. */
+  /** The configured tracker and whether its credentials work. */
   async providerStatus(projectId: string): Promise<ProviderStatus | null> {
-    const project = await this.ctx.store.getProject(projectId);
-    const detected = await this.issues().detect(project);
-    if (!detected) return null;
-    const check = await detected.provider.check();
-    return {
-      id: detected.provider.id,
-      ok: check.ok,
-      message: check.message,
-      projectRef: detected.projectRef,
-    };
+    const link = await this.integrations().provider(projectId);
+    if (!link) return null;
+    const check = await link.provider.check();
+    return { id: link.row.provider, ok: check.ok, message: check.message, projectRef: link.row.project_ref };
   }
 
-  private async requireProvider(project: Project) {
-    const detected = await this.issues().detect(project);
-    if (!detected) {
+  private async requireProvider(projectId: string) {
+    const link = await this.integrations().provider(projectId);
+    if (!link)
       throw new CoreError(
         'CONFLICT',
-        'no issue tracker linked: add a GitHub/GitLab origin remote or set the tracker in Settings',
+        'no issue tracker configured for this project (Settings → Integration)',
       );
-    }
-    return detected;
+    return link;
   }
 
-  async listIssues(
-    projectId: string,
-    filter: { labels?: string[]; query?: string } = {},
-  ): Promise<ExternalIssue[]> {
-    const project = await this.ctx.store.getProject(projectId);
-    const detected = await this.requireProvider(project);
-    return detected.provider.listIssues(detected.projectRef, filter);
+  async listIssues(projectId: string, filter: { query?: string } = {}): Promise<ExternalIssue[]> {
+    const link = await this.requireProvider(projectId);
+    return link.provider.listIssues(filter);
   }
 
-  /** Create backlog tasks from external issues; already-imported issues are skipped. */
+  /**
+   * Create tasks from external issues; already-imported issues are skipped. The
+   * column comes from the status map (done → skipped, doing/review → To do).
+   */
   async importIssues(projectId: string, externalIds: string[]): Promise<Task[]> {
-    const project = await this.ctx.store.getProject(projectId);
-    const detected = await this.requireProvider(project);
+    const link = await this.requireProvider(projectId);
     const existing = new Set(
       (await this.ctx.store.listTasks(projectId)).map((t) => t.source_external_id).filter(Boolean),
     );
     const created: Task[] = [];
     for (const id of externalIds) {
       if (existing.has(id)) continue;
-      const issue = await detected.provider.getIssue(id);
-      created.push(
-        await this.tasks().create(projectId, {
-          title: issue.title,
-          description: `${issue.body}\n\n_Imported from ${issue.url}_`,
-          kind: issue.kind ?? null,
-          priority: issue.priority ?? null,
-          source_provider: detected.provider.id,
-          source_external_id: issue.externalId,
-          source_url: issue.url,
-        }),
-      );
+      const issue = await link.provider.getIssue(id);
+      const column = IssueService.importColumn(link.row.status_map, issue.status);
+      if (column === 'skip') continue;
+      const task = await this.tasks().create(projectId, {
+        title: issue.title,
+        description: `${issue.body}\n\n_Imported from ${issue.url}_`,
+        kind: issue.kind ?? null,
+        priority: issue.priority ?? null,
+        source_provider: link.row.provider,
+        source_external_id: issue.externalId,
+        source_url: issue.url,
+      });
+      // Imported "ready" issues go straight to TODO (skip refinement) — the transition also triggers auto-start.
+      created.push(column === 'todo' ? await this.tasks().importToTodo(task.id) : task);
     }
     return created;
   }

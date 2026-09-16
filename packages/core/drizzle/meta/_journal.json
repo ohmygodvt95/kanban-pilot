@@ -43,6 +43,13 @@
       "when": 1789543827738,
       "tag": "0005_exotic_sharon_carter",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789545063400,
+      "tag": "0006_heavy_lethal_legion",
+      "breakpoints": true
     }
   ]
 }

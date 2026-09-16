@@ -82,5 +82,18 @@ export const MIGRATIONS: EmbeddedMigration[] = [
       "ALTER TABLE `tasks` ADD `kind` text;",
       "ALTER TABLE `tasks` ADD `priority` text;"
     ]
+  },
+  {
+    "tag": "0006_heavy_lethal_legion",
+    "when": 1789545063400,
+    "hash": "dc5833f4e12cc6f04a54c26d0b952580977704a0c7beba1942bc789a3183821c",
+    "sql": [
+      "CREATE TABLE `integrations` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`project_id` text NOT NULL,\n\t`provider` text NOT NULL,\n\t`base_url` text,\n\t`project_ref` text NOT NULL,\n\t`auth` text NOT NULL,\n\t`import_filter` text,\n\t`status_map` text NOT NULL,\n\t`sync_status` integer DEFAULT true NOT NULL,\n\t`sync_comments` integer DEFAULT true NOT NULL,\n\t`poll_interval_seconds` integer DEFAULT 30 NOT NULL,\n\t`last_polled_at` text,\n\t`last_error` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tFOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+      "CREATE UNIQUE INDEX `integrations_project_id_unique` ON `integrations` (`project_id`);",
+      "ALTER TABLE `projects` DROP COLUMN `issue_sync`;",
+      "ALTER TABLE `projects` DROP COLUMN `issue_import_labels`;",
+      "ALTER TABLE `projects` DROP COLUMN `issue_provider`;",
+      "ALTER TABLE `projects` DROP COLUMN `issue_project_ref`;"
+    ]
   }
 ];

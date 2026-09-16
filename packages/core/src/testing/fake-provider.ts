@@ -1,47 +1,81 @@
+import type { Column } from '@agent-kanban/shared';
 import type {
   ExternalIssue,
   IssueProvider,
-  IssueStatus,
-  IssueStatusContext,
+  ProviderConfig,
+  ProviderModule,
   PullRequestInput,
+  SyncContext,
 } from '../providers/types.js';
-import { classifyLabels, statusComment } from '../providers/types.js';
+import { classifyLabels } from '../providers/types.js';
 
-/** In-memory issue tracker for tests: records comments/closes and serves canned issues. */
+/** In-memory tracker for tests: records status changes/comments and serves canned issues. */
 export class FakeIssueProvider implements IssueProvider {
   readonly id = 'github' as const;
   readonly comments: { ref: string; body: string }[] = [];
-  readonly closed: string[] = [];
+  readonly statuses: { ref: string; status: string; column: Column }[] = [];
   readonly prs: PullRequestInput[] = [];
   issues: ExternalIssue[] = [];
-
-  constructor(private readonly projectRef = 'acme/app') {}
+  remoteStatuses = ['Backlog', 'Ready', 'In Progress', 'In Review', 'Done'];
+  lastConfig: ProviderConfig | null = null;
 
   async check() {
-    return { ok: true };
+    return this.lastConfig?.token === 'bad'
+      ? { ok: false, message: 'bad token' }
+      : { ok: true, message: 'fake ok' };
   }
-  detectProjectRef(remoteUrl: string): string | null {
-    return remoteUrl.includes('fake-tracker') ? this.projectRef : null;
-  }
-  async listIssues(_ref: string, filter: { labels?: string[]; query?: string }): Promise<ExternalIssue[]> {
+  async listIssues(): Promise<ExternalIssue[]> {
+    const labels = (this.lastConfig?.importFilter ?? '')
+      .split(',')
+      .map((l) => l.trim())
+      .filter(Boolean);
     return this.issues
-      .filter((i) => !filter.labels?.length || filter.labels.some((l) => i.labels.includes(l)))
+      .filter((i) => !labels.length || labels.some((l) => i.labels.includes(l)))
       .map((i) => ({ ...i, ...classifyLabels(i.labels) }));
   }
-  async getIssue(ref: string): Promise<ExternalIssue> {
-    const issue = this.issues.find((i) => i.externalId === ref);
-    if (!issue) throw new Error(`no issue ${ref}`);
+  async getIssue(id: string): Promise<ExternalIssue> {
+    const issue = this.issues.find((i) => i.externalId === id);
+    if (!issue) throw new Error(`no issue ${id}`);
     return { ...issue, ...classifyLabels(issue.labels) };
   }
-  async syncStatus(ref: string, status: IssueStatus, ctx?: IssueStatusContext): Promise<void> {
-    this.comments.push({ ref, body: statusComment(status, ctx) });
-    if (status === 'done') this.closed.push(ref);
+  async listStatuses() {
+    return this.remoteStatuses;
   }
-  async addComment(ref: string, body: string): Promise<void> {
+  async setStatus(ref: string, status: string, ctx: SyncContext) {
+    this.statuses.push({ ref, status, column: ctx.column });
+  }
+  async addComment(ref: string, body: string) {
     this.comments.push({ ref, body });
   }
-  async createPullRequest(_ref: string, input: PullRequestInput): Promise<string> {
+  async createPullRequest(input: PullRequestInput): Promise<string> {
     this.prs.push(input);
     return `https://fake-tracker/pr/${this.prs.length}`;
   }
+}
+
+/** Module wrapper so tests can register the fake provider under the "github" id. */
+export function fakeProviderModule(instance: FakeIssueProvider): ProviderModule {
+  return {
+    info: {
+      id: 'github',
+      displayName: 'Fake tracker',
+      description: 'test double',
+      statusModel: 'labels',
+      supportsPullRequests: true,
+      defaultStatusMap: {
+        backlog: ['Backlog'],
+        todo: ['Ready'],
+        doing: ['In Progress'],
+        review: ['In Review'],
+        done: ['Done'],
+      },
+      fields: [{ key: 'project_ref', label: 'Project', type: 'text', required: true }],
+    },
+    detectFromRemote: (url) =>
+      url.includes('fake-tracker') ? { projectRef: 'acme/app', baseUrl: null } : null,
+    create: (cfg) => {
+      instance.lastConfig = cfg;
+      return instance;
+    },
+  };
 }

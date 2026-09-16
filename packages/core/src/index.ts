@@ -5,6 +5,7 @@ export * from './db/index.js';
 export * from './events/index.js';
 export * from './executors/index.js';
 export * from './git/index.js';
+export * from './integrations.js';
 export * from './issues.js';
 export * from './postrun/postrun.js';
 export * from './projects.js';

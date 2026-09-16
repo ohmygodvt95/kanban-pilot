@@ -3,6 +3,7 @@ import {
   createProjectSchema,
   createTaskSchema,
   importIssuesSchema,
+  integrationInputSchema,
   updateProjectSchema,
 } from '@agent-kanban/shared';
 import { Hono } from 'hono';
@@ -34,16 +35,39 @@ export function projectRoutes(core: Core) {
     return c.json(await core.projects.executorStatus());
   });
 
-  /** Issue provider detected from the origin remote (GitHub) and its credential status. */
+  /** The configured tracker and whether its credentials work (null when none is configured). */
   app.get('/:id/provider', async (c) => c.json(await core.projects.providerStatus(c.req.param('id'))));
 
+  // ---- integration (one tracker per project) ------------------------------
+  /** Masked integration (secrets replaced by flags) or null. */
+  app.get('/:id/integration', async (c) => c.json(await core.integrations.get(c.req.param('id'))));
+  /** Prefill for a new integration derived from the origin remote. */
+  app.get('/:id/integration/suggest', async (c) =>
+    c.json(await core.integrations.suggest(c.req.param('id'))),
+  );
+  app.put('/:id/integration', zValidator('json', integrationInputSchema), async (c) => {
+    return c.json(await core.integrations.upsert(c.req.param('id'), c.req.valid('json')));
+  });
+  app.delete('/:id/integration', async (c) => {
+    await core.integrations.remove(c.req.param('id'));
+    return c.body(null, 204);
+  });
+  /** Verify credentials for the given (possibly unsaved) settings. */
+  app.post('/:id/integration/test', zValidator('json', integrationInputSchema), async (c) => {
+    return c.json(await core.integrations.test(c.req.param('id'), c.req.valid('json')));
+  });
+  /** Remote statuses / labels for the status-map editor. */
+  app.get('/:id/integration/statuses', async (c) =>
+    c.json(await core.integrations.statuses(c.req.param('id'))),
+  );
+  /** Import new issues right now. */
+  app.post('/:id/integration/fetch', async (c) =>
+    c.json({ imported: await core.issues.pollProject(c.req.param('id')) }),
+  );
+
   app.get('/:id/issues', async (c) => {
-    const labels = c.req.query('labels');
     return c.json(
-      await core.projects.listIssues(c.req.param('id'), {
-        query: c.req.query('query') ?? undefined,
-        labels: labels ? labels.split(',').filter(Boolean) : undefined,
-      }),
+      await core.projects.listIssues(c.req.param('id'), { query: c.req.query('query') ?? undefined }),
     );
   });
 

@@ -1,4 +1,4 @@
-import { Bell, BellOff, ChevronDown, LayoutDashboard, Settings, Wifi, WifiOff } from 'lucide-react';
+import { Bell, BellOff, ChevronDown, LayoutDashboard, Plug, Settings, Wifi, WifiOff } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useProjects } from '../api/queries';
@@ -60,7 +60,7 @@ export function Shell({
   const projects = useProjects();
   const navigate = useNavigate();
   const location = useLocation();
-  const onSettings = location.pathname.endsWith('/settings');
+  const onSettings = location.pathname.endsWith('/settings') || location.pathname.endsWith('/integration');
   const current = projects.data?.find((p) => p.id === projectId);
   return (
     <div className="flex h-full flex-col">
@@ -122,11 +122,18 @@ export function Shell({
               </IconButton>
             </Link>
           ) : (
-            <Link to={`/p/${projectId}/settings`}>
-              <IconButton label="Project settings">
-                <Settings size={16} />
-              </IconButton>
-            </Link>
+            <>
+              <Link to={`/p/${projectId}/integration`}>
+                <IconButton label="Issue tracker integration">
+                  <Plug size={16} />
+                </IconButton>
+              </Link>
+              <Link to={`/p/${projectId}/settings`}>
+                <IconButton label="Project settings">
+                  <Settings size={16} />
+                </IconButton>
+              </Link>
+            </>
           )
         ) : null}
       </header>

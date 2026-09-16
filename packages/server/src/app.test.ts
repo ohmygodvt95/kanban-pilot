@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Core, createCore, git } from '@agent-kanban/core';
-import { FakeClaudeAdapter } from '@agent-kanban/core/testing';
+import { FakeClaudeAdapter, FakeIssueProvider, fakeProviderModule } from '@agent-kanban/core/testing';
 import type { Attempt, Comment, DiffResult, Project, RunEvent, Task, TaskDetail } from '@agent-kanban/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -51,6 +51,7 @@ describe('HTTP API', () => {
     await mkdir(join(webDist, 'assets'), { recursive: true });
     await writeFile(join(webDist, 'index.html'), '<!doctype html><title>ak</title>');
     await writeFile(join(webDist, 'assets', 'app.js'), 'console.log(1)');
+    tracker = new FakeIssueProvider();
     core = createCore({
       paths: {
         dbPath: join(root, 'db.sqlite'),
@@ -59,6 +60,8 @@ describe('HTTP API', () => {
         configDir: root,
       },
       executors: { claude: new FakeClaudeAdapter() },
+      providers: { github: fakeProviderModule(tracker) },
+      issueImportIntervalMs: 0,
       runner: { pollIntervalMs: 50 },
     });
     await core.start();
@@ -72,6 +75,7 @@ describe('HTTP API', () => {
 
   let project: Project;
   let task: Task;
+  let tracker: FakeIssueProvider;
 
   it('creates a project (validating the repo) and lists executors', async () => {
     const bad = await post('/api/projects', { repo_path: root });
@@ -262,6 +266,63 @@ describe('HTTP API', () => {
     bad.set('message', 'x');
     bad.append('files', new File([png], 'a.txt', { type: 'text/plain' }));
     expect((await app.request(`/api/tasks/${t.id}/chat`, { method: 'POST', body: bad })).status).toBe(400);
+  });
+
+  it('manages the tracker integration: modules, upsert with masked secrets, test, statuses, fetch', async () => {
+    const modules = await json<{ id: string; fields: { key: string }[] }[]>(
+      await app.request('/api/providers'),
+    );
+    expect(modules[0]?.id).toBe('github');
+    expect(await json<unknown>(await app.request(`/api/projects/${project.id}/integration`))).toBeNull();
+    const put = await app.request(`/api/projects/${project.id}/integration`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'github',
+        project_ref: 'acme/app',
+        token: 'secret',
+        import_filter: 'agent',
+        poll_interval_seconds: 30,
+      }),
+    });
+    expect(put.status).toBe(200);
+    const saved = await json<{ auth: { has_token: boolean }; status_map: Record<string, string[]> }>(put);
+    expect(saved.auth).toEqual({ username: null, has_token: true, has_password: false });
+    expect(JSON.stringify(saved)).not.toContain('secret');
+    const test = await json<{ ok: boolean }>(
+      await post(`/api/projects/${project.id}/integration/test`, {
+        provider: 'github',
+        project_ref: 'acme/app',
+      }),
+    );
+    expect(test.ok).toBe(true);
+    expect(
+      await json<string[]>(await app.request(`/api/projects/${project.id}/integration/statuses`)),
+    ).toContain('In Progress');
+    tracker.issues = [
+      {
+        externalId: '9',
+        url: 'https://t/9',
+        title: 'From tracker',
+        body: '',
+        labels: ['agent'],
+        status: 'Backlog',
+      },
+    ];
+    expect(
+      await json<{ imported: number }>(await post(`/api/projects/${project.id}/integration/fetch`)),
+    ).toEqual({ imported: 1 });
+    const status = await json<{ id: string; ok: boolean; projectRef: string }>(
+      await app.request(`/api/projects/${project.id}/provider`),
+    );
+    expect(status).toMatchObject({ id: 'github', ok: true, projectRef: 'acme/app' });
+    expect(
+      (await post(`/api/projects/${project.id}/integration`, { provider: 'nope', project_ref: 'x' })).status,
+    ).toBe(404); // PUT only
+    expect((await app.request(`/api/projects/${project.id}/integration`, { method: 'DELETE' })).status).toBe(
+      204,
+    );
+    expect(await json<unknown>(await app.request(`/api/projects/${project.id}/integration`))).toBeNull();
   });
 
   it('serves the SPA with fallback and keeps /api JSON 404s', async () => {

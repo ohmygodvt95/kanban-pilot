@@ -10,6 +10,7 @@ import type {
   RunEventType,
   RunKind,
   RunStatus,
+  StatusMap,
   Substate,
   TaskKind,
   TaskPriority,
@@ -39,10 +40,6 @@ export const projects = sqliteTable('projects', {
   done_action: text('done_action').$type<DoneAction>().notNull().default('merge'),
   auto_start: bool('auto_start').notNull().default(false),
   browser_enabled: bool('browser_enabled').notNull().default(false),
-  issue_sync: bool('issue_sync').notNull().default(true),
-  issue_import_labels: text('issue_import_labels'),
-  issue_provider: text('issue_provider').$type<ProviderId>(),
-  issue_project_ref: text('issue_project_ref'),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 });
@@ -165,6 +162,35 @@ export const comments = sqliteTable(
   (t) => [index('comments_task_idx').on(t.task_id)],
 );
 
+/** Tracker connection of a project (one per project). Secrets are stored locally in `auth`. */
+export const integrations = sqliteTable('integrations', {
+  id: text('id').primaryKey(),
+  project_id: text('project_id')
+    .notNull()
+    .unique()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  provider: text('provider').$type<ProviderId>().notNull(),
+  base_url: text('base_url'),
+  project_ref: text('project_ref').notNull(),
+  /** { username?, token?, password? } — Jira uses basic auth (username + password/API token). */
+  auth: text('auth', { mode: 'json' }).$type<IntegrationAuth>().notNull(),
+  import_filter: text('import_filter'),
+  status_map: text('status_map', { mode: 'json' }).$type<StatusMap>().notNull(),
+  sync_status: bool('sync_status').notNull().default(true),
+  sync_comments: bool('sync_comments').notNull().default(true),
+  poll_interval_seconds: integer('poll_interval_seconds').notNull().default(30),
+  last_polled_at: text('last_polled_at'),
+  last_error: text('last_error'),
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+});
+
+export interface IntegrationAuth {
+  username?: string | null;
+  token?: string | null;
+  password?: string | null;
+}
+
 /** Files attached to comments. The bytes live under CorePaths.attachmentsRoot/<comment_id>/<id>. */
 export const attachments = sqliteTable(
   'attachments',
@@ -231,4 +257,5 @@ export const schema = {
   attachments,
   refinementQuestions,
   jobs,
+  integrations,
 };

@@ -19,7 +19,7 @@ import type {
 import type { AttemptService } from '../attempts/attempts.js';
 import type { CoreContext } from '../context.js';
 import { getExecutor } from '../executors/registry.js';
-import { remoteUrl } from '../git/git.js';
+import type { IntegrationService } from '../integrations.js';
 import type { IssueService } from '../issues.js';
 import {
   buildExecutePrompt,
@@ -31,7 +31,6 @@ import {
   type PromptContext,
   renderRefinePrompt,
 } from '../prompts/prompts.js';
-import { detectProvider } from '../providers/index.js';
 import type { RefinementService } from '../refinement/refinement.js';
 import type { JobRunner } from '../runner/runner.js';
 import type { RunService, RunTestsJobPayload } from '../runs/runs.js';
@@ -71,6 +70,7 @@ export interface TaskServiceDeps {
   refinement: () => RefinementService;
   runner: () => JobRunner;
   issues: () => IssueService;
+  integrations: () => IntegrationService;
 }
 
 export interface CreateTaskInput {
@@ -327,6 +327,12 @@ export class TaskService {
     }
   }
 
+  /** Imported issues already marked "ready" on the tracker skip refinement and land in TODO. */
+  async importToTodo(taskId: string): Promise<Task> {
+    await this.store.updateTask(taskId, { skip_refinement: true });
+    return this.transition(taskId, 'todo', 'system');
+  }
+
   /** Start every TODO task of a project (used when auto_start is switched on). */
   async autoStartPending(projectId: string): Promise<number> {
     let started = 0;
@@ -369,9 +375,8 @@ export class TaskService {
     );
     const positionPatch = payload.position !== undefined ? { position: payload.position } : {};
     const result = await this.apply(task, project, activeAttempt, decision, payload, positionPatch);
-    // Mirror milestones on the linked issue (fire-and-forget; never blocks the transition).
-    const status = this.deps.issues().statusFor(task, result);
-    if (status) void this.deps.issues().syncTask(result, status);
+    // Mirror the column change on the linked issue (fire-and-forget; never blocks the transition).
+    if (result.column !== task.column) void this.deps.issues().syncTask(task, result);
     // A task that just became TODO(ready) may be started right away by the project.
     return result.column === 'todo' && task.column !== 'todo' ? this.maybeAutoStart(result) : result;
   }
@@ -484,21 +489,15 @@ export class TaskService {
       case 'merge': {
         if (!activeAttempt) throw new CoreError('INVALID_TRANSITION', 'no active attempt to merge');
         if (project.done_action === 'pr') {
-          const detected = detectProvider(this.ctx.providers, await remoteUrl(project.repo_path));
-          if (!detected)
+          const link = await this.deps.integrations().provider(project.id);
+          if (!link)
             throw new CoreError(
               'CONFLICT',
-              'done_action is "pr" but the origin remote is not hosted by a supported provider (GitHub)',
+              'done_action is "pr" but no tracker is configured (Settings → Integration)',
             );
-          const check = await detected.provider.check();
-          if (!check.ok) throw new CoreError('CONFLICT', check.message ?? 'provider is not configured');
-          await this.deps.attempts.openPullRequest(
-            task,
-            activeAttempt,
-            project,
-            detected.provider,
-            detected.projectRef,
-          );
+          const check = await link.provider.check();
+          if (!check.ok) throw new CoreError('CONFLICT', check.message ?? 'tracker is not configured');
+          await this.deps.attempts.openPullRequest(task, activeAttempt, project, link.provider);
         } else {
           await this.deps.attempts.merge(task, activeAttempt, project);
         }

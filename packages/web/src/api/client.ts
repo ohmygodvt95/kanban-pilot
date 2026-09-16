@@ -7,7 +7,10 @@ import type {
   DiffResult,
   ExecutorStatus,
   ExternalIssue,
+  Integration,
+  IntegrationInput,
   Project,
+  ProviderModuleInfo,
   ProviderStatus,
   Run,
   RunEvent,
@@ -63,6 +66,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const json = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) });
 
 export const api = {
+  /** Tracker modules and their configuration fields. */
+  providers: () => request<ProviderModuleInfo[]>('/providers'),
   projects: {
     list: () => request<Project[]>('/projects'),
     get: (id: string) => request<Project>(`/projects/${id}`),
@@ -77,6 +82,20 @@ export const api = {
       request<ExternalIssue[]>(`/projects/${id}/issues${query ? `?query=${encodeURIComponent(query)}` : ''}`),
     importIssues: (id: string, externalIds: string[]) =>
       request<Task[]>(`/projects/${id}/import-issues`, json({ external_ids: externalIds })),
+    /** One tracker connection per project (see IntegrationPage). */
+    integration: (id: string) => request<Integration | null>(`/projects/${id}/integration`),
+    integrationSuggest: (id: string) =>
+      request<{ provider: string; base_url: string | null; project_ref: string } | null>(
+        `/projects/${id}/integration/suggest`,
+      ),
+    saveIntegration: (id: string, input: IntegrationInput) =>
+      request<Integration>(`/projects/${id}/integration`, { method: 'PUT', body: JSON.stringify(input) }),
+    deleteIntegration: (id: string) => request<void>(`/projects/${id}/integration`, { method: 'DELETE' }),
+    testIntegration: (id: string, input: IntegrationInput) =>
+      request<{ ok: boolean; message?: string }>(`/projects/${id}/integration/test`, json(input)),
+    integrationStatuses: (id: string) => request<string[]>(`/projects/${id}/integration/statuses`),
+    fetchIssues: (id: string) =>
+      request<{ imported: number }>(`/projects/${id}/integration/fetch`, { method: 'POST' }),
     tasks: (id: string) => request<Task[]>(`/projects/${id}/tasks`),
     createTask: (id: string, input: CreateTaskInput) => request<Task>(`/projects/${id}/tasks`, json(input)),
   },

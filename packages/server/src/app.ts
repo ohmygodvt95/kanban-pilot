@@ -30,6 +30,8 @@ export function createApp(opts: AppOptions): Hono {
   api.get('/health', (c) =>
     c.json({ ok: true, pid: process.pid, activeRuns: opts.core.runner.activeRunIds }),
   );
+  /** Tracker modules and their configuration fields (drives the integration form). */
+  api.get('/providers', (c) => c.json(opts.core.integrations.modules()));
   api.route('/projects', projectRoutes(opts.core));
   api.route('/tasks', taskRoutes(opts.core));
   api.route('/comments', commentRoutes(opts.core));

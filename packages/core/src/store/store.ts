@@ -18,6 +18,7 @@ import {
   attachments,
   attempts,
   comments,
+  integrations,
   jobs,
   projects,
   refinementQuestions,
@@ -34,6 +35,7 @@ type TaskRow = typeof tasks.$inferSelect;
 type AttemptRow = typeof attempts.$inferSelect;
 type RunRow = typeof runs.$inferSelect;
 type JobRow = typeof jobs.$inferSelect;
+export type IntegrationRowFull = typeof integrations.$inferSelect;
 
 const toProject = (r: ProjectRow): Project => r;
 interface TaskAggregates {
@@ -609,6 +611,45 @@ export class Store {
   async findJob(id: string): Promise<Job | null> {
     const r = await this.db.query.jobs.findFirst({ where: eq(jobs.id, id) });
     return r ? toJob(r) : null;
+  }
+
+  // ---- integrations ---------------------------------------------------------
+  /** Stored row incl. secrets; callers must mask before exposing it. */
+  async findIntegration(projectId: string): Promise<IntegrationRowFull | null> {
+    return (
+      (await this.db.query.integrations.findFirst({ where: eq(integrations.project_id, projectId) })) ?? null
+    );
+  }
+
+  async listIntegrations(): Promise<IntegrationRowFull[]> {
+    return await this.db.select().from(integrations);
+  }
+
+  async upsertIntegration(
+    values: Omit<typeof integrations.$inferInsert, 'id' | 'created_at' | 'updated_at'>,
+  ): Promise<IntegrationRowFull> {
+    const now = nowIso();
+    const existing = await this.findIntegration(values.project_id);
+    if (existing) {
+      await this.db
+        .update(integrations)
+        .set({ ...values, updated_at: now })
+        .where(eq(integrations.id, existing.id));
+    } else {
+      await this.db.insert(integrations).values({ ...values, id: newId(), created_at: now, updated_at: now });
+    }
+    return (await this.findIntegration(values.project_id))!;
+  }
+
+  async updateIntegration(id: string, patch: Partial<typeof integrations.$inferInsert>): Promise<void> {
+    await this.db
+      .update(integrations)
+      .set({ ...patch, updated_at: nowIso() })
+      .where(eq(integrations.id, id));
+  }
+
+  async deleteIntegration(projectId: string): Promise<void> {
+    await this.db.delete(integrations).where(eq(integrations.project_id, projectId));
   }
 
   // ---- helpers --------------------------------------------------------------

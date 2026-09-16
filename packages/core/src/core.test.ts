@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type Core, createCore } from './core.js';
 import { git } from './git/git.js';
 import { FakeClaudeAdapter } from './testing/fake-executor.js';
-import { FakeIssueProvider } from './testing/fake-provider.js';
+import { FakeIssueProvider, fakeProviderModule } from './testing/fake-provider.js';
 import { CoreError } from './util/errors.js';
 import { consoleLogger } from './util/logger.js';
 
@@ -786,7 +786,7 @@ describe('attachments and auto-start', () => {
   });
 });
 
-describe('issue tracker link, classification and priority queue', () => {
+describe('issue tracker integration, classification and priority queue', () => {
   let root: string;
   let repo: string;
   let core: Core;
@@ -816,7 +816,7 @@ describe('issue tracker link, classification and priority queue', () => {
     core = createCore({
       paths: paths(),
       executors: { claude: new FakeClaudeAdapter() },
-      providers: { github: tracker },
+      providers: { github: fakeProviderModule(tracker) },
       runner: { pollIntervalMs: 50 },
       issueImportIntervalMs: 0,
     });
@@ -827,74 +827,139 @@ describe('issue tracker link, classification and priority queue', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('imports labelled issues via the manual tracker link, classifies them, and syncs milestones back', async () => {
+  it('configures one integration per project, masks secrets and tests the connection', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    expect(await core.integrations.get(project.id)).toBeNull();
+    expect(core.integrations.modules().map((m) => m.id)).toEqual(['github']);
+    const saved = await core.integrations.upsert(project.id, {
+      provider: 'github',
+      project_ref: 'acme/app',
+      token: 'secret',
+      import_filter: 'agent',
+    });
+    expect(saved.auth).toEqual({ username: null, has_token: true, has_password: false });
+    expect(saved.status_map.doing).toEqual(['In Progress']);
+    expect(saved.poll_interval_seconds).toBe(30);
+    // blank token keeps the stored one; a new token replaces it
+    const again = await core.integrations.upsert(project.id, {
+      provider: 'github',
+      project_ref: 'acme/app',
+      token: '',
+      sync_comments: false,
+    });
+    expect(again.auth.has_token).toBe(true);
+    expect(again.sync_comments).toBe(false);
+    expect(
+      (
+        await core.integrations.test(project.id, {
+          provider: 'github',
+          project_ref: 'acme/app',
+          token: 'bad',
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (await core.integrations.test(project.id, { provider: 'github', project_ref: 'acme/app' })).ok,
+    ).toBe(true);
+    expect(await core.integrations.statuses(project.id)).toContain('In Review');
+    await core.integrations.remove(project.id);
+    expect(await core.integrations.get(project.id)).toBeNull();
+  });
+
+  it('imports filtered issues into the mapped column, classifies them, and syncs statuses back', async () => {
     tracker.issues = [
       {
-        externalId: 'acme/app#1',
+        externalId: '1',
         url: 'https://t/1',
         title: 'Crash on save',
         body: 'steps…',
         labels: ['bug', 'agent', 'priority::high'],
+        status: 'Backlog',
       },
       {
-        externalId: 'acme/app#2',
+        externalId: '2',
         url: 'https://t/2',
-        title: 'Nice to have',
+        title: 'Already ready',
+        body: '',
+        labels: ['agent'],
+        status: 'Ready',
+      },
+      {
+        externalId: '3',
+        url: 'https://t/3',
+        title: 'Finished elsewhere',
+        body: '',
+        labels: ['agent'],
+        status: 'Done',
+      },
+      {
+        externalId: '4',
+        url: 'https://t/4',
+        title: 'Not for agents',
         body: '',
         labels: ['enhancement'],
+        status: 'Backlog',
       },
     ];
-    const project = await core.projects.create({
-      repo_path: repo,
-      refinement_enabled: false,
-      issue_provider: 'github',
-      issue_project_ref: 'acme/app',
-      issue_import_labels: 'agent, urgent',
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    await core.integrations.upsert(project.id, {
+      provider: 'github',
+      project_ref: 'acme/app',
+      token: 't',
+      import_filter: 'agent',
     });
-    expect((await core.projects.providerStatus(project.id))?.projectRef).toBe('acme/app');
-    expect(await core.issues.pollAll()).toBe(1); // only #1 carries an import label
+    expect(await core.issues.pollAll()).toBe(2); // #1 → backlog, #2 → todo, #3 skipped (done), #4 no label
     expect(await core.issues.pollAll()).toBe(0); // idempotent
-    const [task] = await core.store.listTasks(project.id);
-    expect(task).toMatchObject({
-      title: 'Crash on save',
+    const tasks = await core.store.listTasks(project.id);
+    const crash = tasks.find((t) => t.source_external_id === '1')!;
+    const ready = tasks.find((t) => t.source_external_id === '2')!;
+    expect(crash).toMatchObject({
+      column: 'backlog',
       kind: 'bug',
       priority: 'high',
       source_provider: 'github',
-      source_external_id: 'acme/app#1',
     });
+    expect(ready).toMatchObject({ column: 'todo', substate: 'ready', skip_refinement: true });
+    expect((await core.integrations.get(project.id))?.last_polled_at).toBeTruthy();
 
-    await core.tasks.transition(task!.id, 'todo', 'user');
-    const reviewP = waitState(task!.id, 'review');
-    await core.tasks.transition(task!.id, 'doing', 'user');
+    // sync: each column change writes the mapped remote status + a comment
+    await core.tasks.transition(crash.id, 'todo', 'user');
+    const reviewP = waitState(crash.id, 'review');
+    await core.tasks.transition(crash.id, 'doing', 'user');
     await reviewP;
-    await core.tasks.transition(task!.id, 'done', 'user');
-    await new Promise((r) => setTimeout(r, 100)); // sync is fire-and-forget
-    expect(tracker.comments.map((c) => c.body)).toEqual([
+    await core.tasks.transition(crash.id, 'done', 'user');
+    await new Promise((r) => setTimeout(r, 150)); // sync is fire-and-forget
+    const mine = tracker.statuses.filter((s) => s.ref === '1');
+    expect(mine.map((s) => s.status)).toEqual(['Ready', 'In Progress', 'In Review', 'Done']);
+    expect(mine.at(-1)?.column).toBe('done');
+    expect(tracker.comments.filter((c) => c.ref === '1').map((c) => c.body)).toEqual([
+      expect.stringContaining('queued'),
       expect.stringContaining('started working'),
       expect.stringContaining('ready for review'),
       expect.stringContaining('done'),
     ]);
-    expect(tracker.closed).toEqual(['acme/app#1']);
   });
 
-  it('does not sync when issue_sync is off, and manual import maps labels too', async () => {
+  it('respects sync switches and polls only integrations whose interval elapsed', async () => {
     tracker.issues = [
-      { externalId: 'acme/app#7', url: 'https://t/7', title: 'Tidy', body: '', labels: ['chore'] },
+      { externalId: '7', url: 'https://t/7', title: 'Tidy', body: '', labels: ['chore'], status: null },
     ];
-    const project = await core.projects.create({
-      repo_path: repo,
-      refinement_enabled: false,
-      issue_provider: 'github',
-      issue_project_ref: 'acme/app',
-      issue_sync: false,
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    await core.integrations.upsert(project.id, {
+      provider: 'github',
+      project_ref: 'acme/app',
+      token: 't',
+      sync_status: false,
+      sync_comments: false,
+      poll_interval_seconds: 3600,
     });
-    const [task] = await core.projects.importIssues(project.id, ['acme/app#7']);
+    expect(await core.issues.pollDue()).toBe(1);
+    expect(await core.issues.pollDue()).toBe(0); // not due again for an hour
+    const [task] = await core.store.listTasks(project.id);
     expect(task?.kind).toBe('chore');
     await core.tasks.transition(task!.id, 'todo', 'user');
-    const reviewP = waitState(task!.id, 'review');
-    await core.tasks.transition(task!.id, 'doing', 'user');
-    await reviewP;
     await new Promise((r) => setTimeout(r, 100));
+    expect(tracker.statuses).toEqual([]);
     expect(tracker.comments).toEqual([]);
   });
 
