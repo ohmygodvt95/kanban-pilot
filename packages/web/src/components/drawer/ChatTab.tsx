@@ -30,7 +30,6 @@ export function ChatTab({ task, project }: { task: TaskDetail; project: Project 
   });
 
   const timeline = useMemo(() => buildTimeline(task), [task]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when the timeline changes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
   }, [timeline.length, activeRun?.id]);

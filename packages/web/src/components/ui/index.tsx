@@ -290,7 +290,6 @@ export function KeyValue({ items }: { items: { k: ReactNode; v: ReactNode }[] })
   return (
     <dl className="grid grid-cols-[minmax(110px,auto)_1fr] gap-x-4 gap-y-1.5 text-xs">
       {items.map((it, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: static list
         <div key={i} className="contents">
           <dt className="text-zinc-500">{it.k}</dt>
           <dd className="min-w-0 break-words text-zinc-800 dark:text-zinc-200">{it.v}</dd>
