@@ -7,6 +7,22 @@ export const formatTime = (iso: string | null | undefined) => {
   return d.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' });
 };
 
+export const formatClock = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+
+export const relativeTime = (iso: string | null | undefined, now = Date.now()) => {
+  if (!iso) return '';
+  const diff = Math.max(0, now - new Date(iso).getTime());
+  const s = Math.round(diff / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  return d < 7 ? `${d}d ago` : new Date(iso).toLocaleDateString();
+};
+
 export const formatDuration = (start: string | null, end: string | null) => {
   if (!start) return '';
   const ms = (end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime();

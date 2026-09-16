@@ -9,6 +9,7 @@ import {
   buildExecutePrompt,
   buildFollowupPrompt,
   buildFollowupPromptWithoutResume,
+  buildPlannerChatPrompt,
   buildRetryPrompt,
 } from '../prompts/prompts.js';
 import type { RefinementService } from '../refinement/refinement.js';
@@ -286,15 +287,17 @@ export class TaskService {
         const lastSession = adapter.supportsResume ? await this.store.lastSessionRun(activeAttempt.id) : null;
         const runs = await this.store.listRuns(task.id);
         const lastRun = [...runs].reverse().find((r) => r.attempt_id === activeAttempt.id);
+        const feedback = await this.store.unconsumedFeedback(task.id);
         const prompt = lastSession
-          ? buildRetryPrompt(lastRun?.error_message ?? task.last_error)
+          ? buildRetryPrompt(lastRun?.error_message ?? task.last_error, feedback)
           : buildExecutePrompt({
               task,
               worktreePath: activeAttempt.worktree_path,
               repoPath: project.repo_path,
               resumingRefinement: false,
+              previousFeedback: feedback.length ? feedback : undefined,
             });
-        await this.deps.runs.create({
+        const run = await this.deps.runs.create({
           task,
           attempt: activeAttempt,
           kind: lastSession ? 'followup' : 'execute',
@@ -302,6 +305,10 @@ export class TaskService {
           prompt,
           resumeSessionId: lastSession?.session_id ?? null,
         });
+        await this.store.markCommentsConsumed(
+          feedback.map((c) => c.id),
+          run.id,
+        );
         return this.store.setTaskState(task.id, 'doing', 'queued', { ...extra, last_error: null });
       }
 
@@ -361,6 +368,70 @@ export class TaskService {
       throw err;
     }
     return this.store.setTaskState(task.id, 'doing', 'queued', { ...extra, current_attempt_id: attempt.id });
+  }
+
+  // ---- chat -----------------------------------------------------------------
+  /**
+   * Send a free-form message to the agent. In REVIEW / DOING(error) it becomes
+   * feedback and resumes the attempt's session (followup / retry). In BACKLOG / TODO
+   * it chats with the planner (read-only refine session) and may update the plan.
+   */
+  async chat(taskId: string, message: string): Promise<Task> {
+    const task = await this.store.getTask(taskId);
+    const body = message.trim();
+    if (!body) throw new CoreError('VALIDATION', 'message is empty');
+    if (task.column === 'done')
+      throw new CoreError('INVALID_TRANSITION', 'DONE tasks are immutable; clone the task to continue');
+    if (await this.hasActiveRun(taskId)) {
+      throw new CoreError(
+        'CONFLICT',
+        'the agent is still running; wait for it to finish or cancel the run first',
+      );
+    }
+    const project = await this.store.getProject(task.project_id);
+
+    if (task.column === 'review' || (task.column === 'doing' && task.substate === 'error')) {
+      if (!(await this.activeAttempt(task))) throw new CoreError('CONFLICT', 'task has no active attempt');
+      await this.store.insertComment({
+        task_id: task.id,
+        attempt_id: task.current_attempt_id,
+        kind: 'chat',
+        body,
+      });
+      return task.column === 'review'
+        ? this.transition(taskId, 'doing', 'user')
+        : this.transition(taskId, 'doing', 'user', { action: 'retry' });
+    }
+
+    if (task.column === 'backlog' || task.column === 'todo') {
+      const adapter = await this.executorFor(task, project);
+      const comment = await this.store.insertComment({
+        task_id: task.id,
+        attempt_id: null,
+        kind: 'chat',
+        body,
+      });
+      const qa = await this.store.listQuestions(task.id);
+      const resume = adapter.supportsResume && !!task.refinement_session_id;
+      const prompt = buildPlannerChatPrompt(task, body, qa, {
+        structuredOutputSupported: adapter.supportsStructuredOutput,
+        resuming: resume,
+      });
+      const run = await this.deps.runs.create({
+        task,
+        attempt: null,
+        kind: 'chat',
+        executor: adapter.id,
+        prompt,
+        resumeSessionId: resume ? task.refinement_session_id : null,
+      });
+      await this.store.markCommentsConsumed([comment.id], run.id);
+      return this.store.touchTask(taskId);
+    }
+    throw new CoreError(
+      'INVALID_TRANSITION',
+      `chat is not available while the task is ${task.column}/${task.substate}`,
+    );
   }
 
   // ---- attempt actions ------------------------------------------------------

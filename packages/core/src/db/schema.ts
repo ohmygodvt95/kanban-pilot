@@ -98,6 +98,7 @@ export const runs = sqliteTable(
     resumed_from_session_id: text('resumed_from_session_id'),
     result_subtype: text('result_subtype'),
     structured_output: text('structured_output', { mode: 'json' }),
+    result_text: text('result_text'),
     cost_usd: real('cost_usd'),
     num_turns: integer('num_turns'),
     error_message: text('error_message'),

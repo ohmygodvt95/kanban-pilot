@@ -1,62 +1,66 @@
 import type { ExecutorId, Project, UpdateProjectInput } from '@agent-kanban/shared';
 import { EXECUTOR_IDS } from '@agent-kanban/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { keys, useProject } from '../api/queries';
-import { Button, Field, inputClass, useConfirm } from '../components/ui';
+import { Shell } from '../components/Shell';
+import { Button, Card, Field, inputClass, Switch, useConfirm } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
+import { EXECUTOR_LABELS } from '../lib/state';
+import { ExecutorStatusRow } from './ProjectsPage';
 
 export function SettingsPage() {
   const { projectId = '' } = useParams();
   const project = useProject(projectId);
-  if (!project.data)
-    return (
-      <div className="p-6 text-sm text-zinc-500">{project.isError ? 'Project not found.' : 'Loading…'}</div>
-    );
-  return <SettingsForm project={project.data} />;
+  return (
+    <Shell projectId={projectId}>
+      {project.data ? (
+        <SettingsForm project={project.data} />
+      ) : (
+        <div className="p-6 text-sm text-zinc-500">{project.isError ? 'Project not found.' : 'Loading…'}</div>
+      )}
+    </Shell>
+  );
 }
+
+type Form = Required<Omit<UpdateProjectInput, 'setup_script' | 'test_script' | 'refinement_prompt'>> & {
+  setup_script: string;
+  test_script: string;
+  refinement_prompt: string;
+};
+
+const toForm = (p: Project): Form => ({
+  name: p.name,
+  default_executor: p.default_executor,
+  base_branch: p.base_branch,
+  setup_script: p.setup_script ?? '',
+  test_script: p.test_script ?? '',
+  auto_done: p.auto_done,
+  refinement_enabled: p.refinement_enabled,
+  max_concurrent_runs: p.max_concurrent_runs,
+  run_timeout_minutes: p.run_timeout_minutes,
+  refinement_prompt: p.refinement_prompt ?? '',
+});
 
 function SettingsForm({ project }: { project: Project }) {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
   const [confirm, confirmNode] = useConfirm();
-  const [form, setForm] = useState<UpdateProjectInput & { name: string }>({
-    name: project.name,
-    default_executor: project.default_executor,
-    base_branch: project.base_branch,
-    setup_script: project.setup_script ?? '',
-    test_script: project.test_script ?? '',
-    auto_done: project.auto_done,
-    refinement_enabled: project.refinement_enabled,
-    max_concurrent_runs: project.max_concurrent_runs,
-    run_timeout_minutes: project.run_timeout_minutes,
-    refinement_prompt: project.refinement_prompt ?? '',
-  });
-  useEffect(() => {
-    setForm({
-      name: project.name,
-      default_executor: project.default_executor,
-      base_branch: project.base_branch,
-      setup_script: project.setup_script ?? '',
-      test_script: project.test_script ?? '',
-      auto_done: project.auto_done,
-      refinement_enabled: project.refinement_enabled,
-      max_concurrent_runs: project.max_concurrent_runs,
-      run_timeout_minutes: project.run_timeout_minutes,
-      refinement_prompt: project.refinement_prompt ?? '',
-    });
-  }, [project]);
+  const [form, setForm] = useState<Form>(() => toForm(project));
+  useEffect(() => setForm(toForm(project)), [project]);
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
   const save = useMutation({
     mutationFn: () =>
       api.projects.update(project.id, {
         ...form,
-        setup_script: form.setup_script?.trim() ? form.setup_script : null,
-        test_script: form.test_script?.trim() ? form.test_script : null,
-        refinement_prompt: form.refinement_prompt?.trim() ? form.refinement_prompt : null,
+        setup_script: form.setup_script.trim() ? form.setup_script : null,
+        test_script: form.test_script.trim() ? form.test_script : null,
+        refinement_prompt: form.refinement_prompt.trim() ? form.refinement_prompt : null,
       }),
     onSuccess: (p) => {
       qc.setQueryData(keys.project(p.id), p);
@@ -74,145 +78,168 @@ function SettingsForm({ project }: { project: Project }) {
     onError: (err) => toast.error(err, 'Delete failed'),
   });
 
-  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
-
   return (
-    <div className="mx-auto max-w-2xl p-6">
+    <div className="mx-auto max-w-3xl p-6">
       {confirmNode}
-      <header className="mb-4 flex items-center gap-3 text-sm">
-        <Link to="/" className="text-blue-600 hover:underline dark:text-blue-400">
-          Projects
-        </Link>
-        <span>/</span>
-        <Link to={`/p/${project.id}`} className="text-blue-600 hover:underline dark:text-blue-400">
-          {project.name}
-        </Link>
-        <span>/</span>
-        <span>Settings</span>
-      </header>
+      <div className="mb-5 flex items-end justify-between">
+        <div>
+          <h1 className="font-semibold text-2xl tracking-tight">Settings</h1>
+          <p className="font-mono text-xs text-zinc-500">{project.repo_path}</p>
+        </div>
+        <Button
+          variant="primary"
+          icon={<Save size={14} />}
+          loading={save.isPending}
+          onClick={() => save.mutate()}
+        >
+          Save changes
+        </Button>
+      </div>
       <form
-        className="grid gap-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+        className="grid gap-4"
         onSubmit={(e) => {
           e.preventDefault();
           save.mutate();
         }}
       >
-        <Field label="Name">
-          <input className={inputClass} value={form.name} onChange={(e) => set('name', e.target.value)} />
-        </Field>
-        <Field label="Repository">
-          <input className={`${inputClass} font-mono`} value={project.repo_path} readOnly disabled />
-        </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Default executor">
-            <select
-              className={inputClass}
-              value={form.default_executor}
-              onChange={(e) => set('default_executor', e.target.value as ExecutorId)}
+        <Card title="General">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Name">
+              <input className={inputClass} value={form.name} onChange={(e) => set('name', e.target.value)} />
+            </Field>
+            <Field label="Base branch" hint="Attempts branch from here and merge back into it.">
+              <input
+                className={`${inputClass} font-mono`}
+                value={form.base_branch}
+                onChange={(e) => set('base_branch', e.target.value)}
+              />
+            </Field>
+          </div>
+        </Card>
+
+        <Card title="Executor">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Default executor">
+              <select
+                className={inputClass}
+                value={form.default_executor}
+                onChange={(e) => set('default_executor', e.target.value as ExecutorId)}
+              >
+                {EXECUTOR_IDS.map((id) => (
+                  <option key={id} value={id}>
+                    {EXECUTOR_LABELS[id] ?? id}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Max concurrent runs">
+              <input
+                type="number"
+                min={1}
+                max={16}
+                className={inputClass}
+                value={form.max_concurrent_runs}
+                onChange={(e) => set('max_concurrent_runs', Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Run timeout (minutes)">
+              <input
+                type="number"
+                min={1}
+                className={inputClass}
+                value={form.run_timeout_minutes}
+                onChange={(e) => set('run_timeout_minutes', Number(e.target.value))}
+              />
+            </Field>
+          </div>
+          <div className="mt-3">
+            <ExecutorStatusRow projectId={project.id} />
+          </div>
+        </Card>
+
+        <Card title="Scripts">
+          <div className="grid gap-4">
+            <Field
+              label="Setup script"
+              hint="Runs inside the fresh worktree before the agent starts (e.g. pnpm install). Failure → DOING(error)."
             >
-              {EXECUTOR_IDS.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Base branch">
-            <input
-              className={`${inputClass} font-mono`}
-              value={form.base_branch}
-              onChange={(e) => set('base_branch', e.target.value)}
+              <input
+                className={`${inputClass} font-mono`}
+                value={form.setup_script}
+                onChange={(e) => set('setup_script', e.target.value)}
+                placeholder="pnpm install"
+              />
+            </Field>
+            <Field
+              label="Test script"
+              hint="Runs after each agent run (10 min timeout). Result shows on the card and in the Tests tab."
+            >
+              <input
+                className={`${inputClass} font-mono`}
+                value={form.test_script}
+                onChange={(e) => set('test_script', e.target.value)}
+                placeholder="pnpm test"
+              />
+            </Field>
+          </div>
+        </Card>
+
+        <Card title="Workflow">
+          <div className="grid gap-4">
+            <Switch
+              checked={form.refinement_enabled}
+              onChange={(v) => set('refinement_enabled', v)}
+              label="Refinement step: Backlog → To do asks the agent to read the repo, plan, and raise questions first"
             />
-          </Field>
-          <Field label="Max concurrent runs">
-            <input
-              type="number"
-              min={1}
-              max={16}
-              className={inputClass}
-              value={form.max_concurrent_runs}
-              onChange={(e) => set('max_concurrent_runs', Number(e.target.value))}
+            <Switch
+              checked={form.auto_done}
+              onChange={(v) => set('auto_done', v)}
+              label="Auto-merge to Done when the test script passes (off by default)"
             />
-          </Field>
-          <Field label="Run timeout (minutes)">
-            <input
-              type="number"
-              min={1}
-              className={inputClass}
-              value={form.run_timeout_minutes}
-              onChange={(e) => set('run_timeout_minutes', Number(e.target.value))}
-            />
-          </Field>
-        </div>
-        <Field label="Setup script" hint="Runs in the worktree before the agent starts (e.g. pnpm install).">
-          <input
-            className={`${inputClass} font-mono`}
-            value={form.setup_script ?? ''}
-            onChange={(e) => set('setup_script', e.target.value)}
-            placeholder="pnpm install"
-          />
-        </Field>
-        <Field
-          label="Test script"
-          hint="Runs after the agent finishes; result shown on the card and in the Tests tab."
-        >
-          <input
-            className={`${inputClass} font-mono`}
-            value={form.test_script ?? ''}
-            onChange={(e) => set('test_script', e.target.value)}
-            placeholder="pnpm test"
-          />
-        </Field>
-        <div className="flex flex-wrap gap-6 text-sm">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={!!form.refinement_enabled}
-              onChange={(e) => set('refinement_enabled', e.target.checked)}
-            />
-            Refinement step (Backlog → To do asks the agent to plan and raise questions)
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={!!form.auto_done}
-              onChange={(e) => set('auto_done', e.target.checked)}
-            />
-            Auto-merge to Done when tests pass
-          </label>
-        </div>
-        <Field
-          label="Refinement prompt template"
-          hint="Optional. Placeholders: {{title}} {{description}} {{qa}}. Leave empty for the default."
-        >
-          <textarea
-            className={`${inputClass} min-h-32 font-mono text-xs`}
-            value={form.refinement_prompt ?? ''}
-            onChange={(e) => set('refinement_prompt', e.target.value)}
-          />
-        </Field>
-        <div className="flex items-center justify-between">
-          <Button
-            variant="danger"
-            type="button"
-            onClick={async () => {
-              if (
-                await confirm({
-                  title: 'Delete project?',
-                  body: 'Tasks, runs and comments are deleted. Worktrees of active attempts block deletion.',
-                  danger: true,
-                  confirmLabel: 'Delete',
-                })
-              )
-                remove.mutate();
-            }}
-          >
-            Delete project
-          </Button>
-          <Button variant="primary" type="submit" disabled={save.isPending}>
-            Save
-          </Button>
-        </div>
+            <Field
+              label="Refinement prompt template"
+              hint={
+                <>
+                  Optional. Placeholders:{' '}
+                  <code className="font-mono">{'{{title}} {{description}} {{qa}}'}</code>. Empty = built-in
+                  template.
+                </>
+              }
+            >
+              <textarea
+                className={`${inputClass} min-h-36 font-mono text-xs`}
+                value={form.refinement_prompt}
+                onChange={(e) => set('refinement_prompt', e.target.value)}
+              />
+            </Field>
+          </div>
+        </Card>
+
+        <Card title="Danger zone">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-sm text-zinc-500">
+              Deletes the project, its tasks, runs and comments. Refused while attempts are active.
+            </p>
+            <Button
+              variant="danger"
+              icon={<Trash2 size={14} />}
+              loading={remove.isPending}
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: 'Delete project?',
+                    body: 'This cannot be undone.',
+                    danger: true,
+                    confirmLabel: 'Delete project',
+                  })
+                )
+                  remove.mutate();
+              }}
+            >
+              Delete project
+            </Button>
+          </div>
+        </Card>
       </form>
     </div>
   );

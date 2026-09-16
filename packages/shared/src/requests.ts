@@ -70,6 +70,9 @@ export const createCommentSchema = z.object({
 });
 export type CreateCommentInput = z.infer<typeof createCommentSchema>;
 
+export const chatMessageSchema = z.object({ message: z.string().min(1).max(20_000) });
+export type ChatMessageInput = z.infer<typeof chatMessageSchema>;
+
 export const answerQuestionSchema = z.object({ answer: z.string().min(1) });
 export type AnswerQuestionInput = z.infer<typeof answerQuestionSchema>;
 

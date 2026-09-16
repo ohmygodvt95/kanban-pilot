@@ -2,7 +2,7 @@ import type { Job, Run, RunEventType } from '@agent-kanban/shared';
 import type { CoreContext } from '../context.js';
 import { getExecutor } from '../executors/registry.js';
 import type { ExecutorInput, NormalizedEvent } from '../executors/types.js';
-import { REFINE_SCHEMA } from '../prompts/prompts.js';
+import { CHAT_SCHEMA, REFINE_SCHEMA } from '../prompts/prompts.js';
 import type { PostRunJobPayload, RunAgentJobPayload, SetupJobPayload } from '../runs/runs.js';
 import { errorMessage } from '../util/errors.js';
 import { type AgentProcess, formatCommand, isPidAlive, runScript, spawnAgent } from './process.js';
@@ -259,10 +259,16 @@ export class JobRunner {
     const input: ExecutorInput = {
       cwd,
       prompt: run.prompt,
-      mode: run.kind === 'refine' ? 'refine' : 'execute',
+      mode: run.kind === 'refine' || run.kind === 'chat' ? 'refine' : 'execute',
       resumeSessionId:
         adapter.supportsResume && run.resumed_from_session_id ? run.resumed_from_session_id : undefined,
-      outputSchema: run.kind === 'refine' && adapter.supportsStructuredOutput ? REFINE_SCHEMA : undefined,
+      outputSchema: !adapter.supportsStructuredOutput
+        ? undefined
+        : run.kind === 'refine'
+          ? REFINE_SCHEMA
+          : run.kind === 'chat'
+            ? CHAT_SCHEMA
+            : undefined,
     };
     const command = adapter.buildCommand(input);
     run = await store.updateRun(run.id, {
@@ -342,6 +348,7 @@ export class JobRunner {
       session_id: sessionId,
       result_subtype: res?.subtype ?? null,
       structured_output: res?.structuredOutput ?? null,
+      result_text: res?.resultText ?? null,
       cost_usd: res?.costUsd ?? null,
       num_turns: res?.numTurns ?? null,
       error_message: error,

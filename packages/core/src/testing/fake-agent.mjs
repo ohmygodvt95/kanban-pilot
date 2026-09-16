@@ -53,6 +53,30 @@ if (prompt.includes('FAKE:fail')) {
   process.exit(1);
 }
 
+if (mode === 'refine' && prompt.includes('chat với planner')) {
+  const msg = prompt.split('\n')[1] ?? '';
+  const structured = {
+    reply: `Planner reply to: ${msg}`,
+    plan: /plan/i.test(msg) ? `Updated plan because: ${msg}` : null,
+  };
+  emit({
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'text', text: structured.reply }] },
+    session_id: sessionId,
+  });
+  emit({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    session_id: sessionId,
+    num_turns: 1,
+    total_cost_usd: 0.01,
+    result: JSON.stringify(structured),
+    structured_output: structured,
+  });
+  process.exit(0);
+}
+
 if (mode === 'refine') {
   const answered = /A: /.test(prompt);
   const ready = !prompt.includes('FAKE:ask') || answered;

@@ -113,7 +113,7 @@ export class Store {
       .where(
         and(
           inArray(comments.task_id, taskIds),
-          eq(comments.kind, 'feedback'),
+          inArray(comments.kind, ['feedback', 'chat']),
           isNull(comments.consumed_by_run_id),
         ),
       )
@@ -378,7 +378,11 @@ export class Store {
       .select()
       .from(comments)
       .where(
-        and(eq(comments.task_id, taskId), eq(comments.kind, 'feedback'), isNull(comments.consumed_by_run_id)),
+        and(
+          eq(comments.task_id, taskId),
+          inArray(comments.kind, ['feedback', 'chat']),
+          isNull(comments.consumed_by_run_id),
+        ),
       )
       .orderBy(asc(comments.created_at));
   }
@@ -387,7 +391,7 @@ export class Store {
     return await this.db
       .select()
       .from(comments)
-      .where(and(eq(comments.task_id, taskId), eq(comments.kind, 'feedback')))
+      .where(and(eq(comments.task_id, taskId), inArray(comments.kind, ['feedback', 'chat'])))
       .orderBy(asc(comments.created_at));
   }
 

@@ -8,6 +8,13 @@
       "when": 1789530253232,
       "tag": "0000_lyrical_starfox",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789535931110,
+      "tag": "0001_crazy_night_thrasher",
+      "breakpoints": true
     }
   ]
 }

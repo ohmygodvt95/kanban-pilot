@@ -1,13 +1,27 @@
 import type { ExecutorId, Project, TaskDetail } from '@agent-kanban/shared';
 import { EXECUTOR_IDS } from '@agent-kanban/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  Check,
+  Code2,
+  Copy,
+  Pencil,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Sparkles,
+  Square,
+  Trash2,
+  Undo2,
+} from 'lucide-react';
+import { type ReactNode, useEffect, useState } from 'react';
 import Markdown from 'react-markdown';
 import { ApiError, api } from '../../api/client';
 import { keys, upsertTask } from '../../api/queries';
-import { formatCost } from '../../lib/format';
-import { isBusy } from '../../lib/state';
-import { Button, Field, inputClass, useConfirm } from '../ui';
+import { formatCost, formatTime } from '../../lib/format';
+import { EXECUTOR_LABELS, isBusy } from '../../lib/state';
+import { Button, Card, Field, inputClass, KeyValue, Switch, useConfirm } from '../ui';
 import { useToast } from '../ui/Toast';
 
 export function OverviewTab({ task, project }: { task: TaskDetail; project: Project }) {
@@ -78,13 +92,15 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
 
   const openQuestions = task.questions.filter((q) => !q.answer);
   const executor = task.executor ?? project.default_executor;
+  const lastRun = task.runs.at(-1);
 
   return (
-    <div className="grid gap-5 p-4 text-sm">
+    <div className="grid gap-4 p-4 text-sm">
       {confirmNode}
       {task.last_error ? (
-        <div className="whitespace-pre-wrap rounded-md border border-red-200 bg-red-50 p-3 text-red-800 text-xs dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
-          {task.last_error}
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800 text-xs dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <div className="whitespace-pre-wrap">{task.last_error}</div>
         </div>
       ) : null}
 
@@ -102,23 +118,28 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
         <Questions task={task} />
       ) : null}
 
-      <section>
-        <div className="mb-1 flex items-center justify-between">
-          <h3 className="font-medium text-zinc-600 dark:text-zinc-300">Description</h3>
-          {!editing && !busy && task.column !== 'done' ? (
-            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+      <Card
+        title="Description"
+        actions={
+          !editing && !busy && task.column !== 'done' ? (
+            <Button size="xs" variant="ghost" icon={<Pencil size={12} />} onClick={() => setEditing(true)}>
               Edit
             </Button>
-          ) : null}
-        </div>
+          ) : null
+        }
+      >
         {editing ? (
-          <div className="grid gap-2">
-            <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
-            <textarea
-              className={`${inputClass} min-h-48 font-mono text-xs`}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
+          <div className="grid gap-3">
+            <Field label="Title">
+              <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
+            </Field>
+            <Field label="Description (markdown — this is the prompt)">
+              <textarea
+                className={`${inputClass} min-h-52 font-mono text-xs`}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </Field>
             <Field label="Linked issue URL (optional)">
               <input
                 className={inputClass}
@@ -134,15 +155,17 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
               <Button
                 size="sm"
                 variant="primary"
-                disabled={!title.trim() || save.isPending}
+                disabled={!title.trim()}
+                loading={save.isPending}
                 onClick={() => save.mutate()}
+                icon={<Check size={13} />}
               >
                 Save
               </Button>
             </div>
           </div>
         ) : (
-          <div className="prose-sm rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+          <div className="md text-[13px] leading-relaxed">
             {task.description ? (
               <Markdown>{task.description}</Markdown>
             ) : (
@@ -150,114 +173,177 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
             )}
           </div>
         )}
-      </section>
+      </Card>
 
       {task.plan ? (
-        <section>
-          <h3 className="mb-1 font-medium text-zinc-600 dark:text-zinc-300">Plan (from refinement)</h3>
-          <div className="prose-sm rounded-md border border-violet-200 bg-violet-50/40 p-3 dark:border-violet-900 dark:bg-violet-950/20">
+        <Card
+          title={
+            <span className="flex items-center gap-1.5">
+              <Sparkles size={14} className="text-violet-500" /> Plan from refinement
+            </span>
+          }
+        >
+          <div className="md text-[13px] leading-relaxed">
             <Markdown>{task.plan}</Markdown>
           </div>
-        </section>
+        </Card>
       ) : null}
 
       {task.questions.length && !(task.column === 'backlog' && task.substate === 'needs_answer') ? (
-        <section>
-          <h3 className="mb-1 font-medium text-zinc-600 dark:text-zinc-300">Refinement Q&A</h3>
-          <ul className="grid gap-1 rounded-md border border-zinc-200 p-3 text-xs dark:border-zinc-800">
+        <Card title="Refinement Q&A">
+          <ul className="grid gap-2 text-xs">
             {task.questions.map((q) => (
-              <li key={q.id}>
-                <div className="font-medium">Q: {q.question}</div>
-                <div className="text-zinc-600 dark:text-zinc-300">
-                  A: {q.answer ?? <em className="text-zinc-400">unanswered</em>}
+              <li key={q.id} className="rounded-md bg-zinc-50 p-2 dark:bg-zinc-800/60">
+                <div className="font-medium">{q.question}</div>
+                <div className="mt-0.5 text-zinc-600 dark:text-zinc-300">
+                  {q.answer ?? <em className="text-zinc-400">unanswered</em>}
                 </div>
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       ) : null}
 
-      <section className="grid gap-2 text-xs text-zinc-600 dark:text-zinc-300">
-        <h3 className="font-medium">Details</h3>
-        <div className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-1">
-          <span>Executor</span>
-          <span>
-            {busy || task.column === 'done' ? (
-              executor
-            ) : (
-              <select
-                className="rounded border border-zinc-300 bg-transparent px-1 py-0.5 dark:border-zinc-600"
-                value={task.executor ?? ''}
-                onChange={(e) =>
-                  run(() =>
-                    api.tasks.update(task.id, { executor: (e.target.value || null) as ExecutorId | null }),
-                  )
-                }
-              >
-                <option value="">project default ({project.default_executor})</option>
-                {EXECUTOR_IDS.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))}
-              </select>
-            )}
-          </span>
-          <span>Refinement</span>
-          <span>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={task.skip_refinement}
-                disabled={busy || task.column !== 'backlog'}
-                onChange={(e) => run(() => api.tasks.update(task.id, { skip_refinement: e.target.checked }))}
-              />
-              skip for this task
-            </label>
-          </span>
-          <span>Total cost</span>
-          <span>{formatCost(task.total_cost_usd) || '$0.00'}</span>
-          <span>Runs</span>
-          <span>{task.runs.length}</span>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card title="Agent">
+          <KeyValue
+            items={[
+              {
+                k: 'Executor',
+                v:
+                  busy || task.column === 'done' ? (
+                    (EXECUTOR_LABELS[executor] ?? executor)
+                  ) : (
+                    <select
+                      className="rounded border border-zinc-300 bg-transparent px-1 py-0.5 text-xs dark:border-zinc-600"
+                      value={task.executor ?? ''}
+                      onChange={(e) =>
+                        run(() =>
+                          api.tasks.update(task.id, {
+                            executor: (e.target.value || null) as ExecutorId | null,
+                          }),
+                        )
+                      }
+                    >
+                      <option value="">project default ({EXECUTOR_LABELS[project.default_executor]})</option>
+                      {EXECUTOR_IDS.map((id) => (
+                        <option key={id} value={id}>
+                          {EXECUTOR_LABELS[id] ?? id}
+                        </option>
+                      ))}
+                    </select>
+                  ),
+              },
+              {
+                k: 'Refinement',
+                v: (
+                  <Switch
+                    checked={task.skip_refinement}
+                    disabled={busy || task.column !== 'backlog'}
+                    onChange={(v) => run(() => api.tasks.update(task.id, { skip_refinement: v }))}
+                    label={<span className="text-xs">skip for this task</span>}
+                  />
+                ),
+              },
+              { k: 'Total cost', v: formatCost(task.total_cost_usd) || '$0.00' },
+              {
+                k: 'Runs',
+                v: `${task.runs.length}${lastRun ? ` · last ${lastRun.kind} ${lastRun.status} ${formatTime(lastRun.finished_at ?? lastRun.created_at)}` : ''}`,
+              },
+              {
+                k: 'Session',
+                v: (
+                  <span className="font-mono">
+                    {task.refinement_session_id
+                      ? `${task.refinement_session_id.slice(0, 8)}… (refinement)`
+                      : lastRun?.session_id
+                        ? `${lastRun.session_id.slice(0, 8)}…`
+                        : '—'}
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </Card>
+        <Card title="Attempt">
           {task.current_attempt ? (
-            <>
-              <span>Branch</span>
-              <span className="font-mono">{task.current_attempt.branch}</span>
-              <span>Worktree</span>
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="break-all font-mono">{task.current_attempt.worktree_path}</span>
-                {task.current_attempt.status === 'active' ? (
-                  <a
-                    className="text-blue-600 hover:underline dark:text-blue-400"
-                    href={`vscode://file/${task.current_attempt.worktree_path}`}
-                  >
-                    Open in VS Code
-                  </a>
-                ) : null}
-              </span>
-              <span>Attempt</span>
-              <span>
-                {task.current_attempt.status} · base {task.current_attempt.base_commit.slice(0, 8)}
-              </span>
-            </>
-          ) : null}
-          {task.source_url ? (
-            <>
-              <span>Issue</span>
-              <a
-                className="truncate text-blue-600 hover:underline dark:text-blue-400"
-                href={task.source_url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {task.source_url}
-              </a>
-            </>
-          ) : null}
-          <span>Task id</span>
-          <span className="font-mono">{task.id}</span>
-        </div>
-      </section>
+            <KeyValue
+              items={[
+                { k: 'Status', v: task.current_attempt.status },
+                { k: 'Branch', v: <span className="font-mono">{task.current_attempt.branch}</span> },
+                {
+                  k: 'Base',
+                  v: <span className="font-mono">{task.current_attempt.base_commit.slice(0, 10)}</span>,
+                },
+                {
+                  k: 'Worktree',
+                  v: (
+                    <span className="flex flex-col gap-1">
+                      <span className="break-all font-mono text-[11px]">
+                        {task.current_attempt.worktree_path}
+                      </span>
+                      {task.current_attempt.status === 'active' ? (
+                        <span className="flex gap-2">
+                          <a
+                            className="inline-flex items-center gap-1 text-accent-600 hover:underline dark:text-accent-300"
+                            href={`vscode://file/${task.current_attempt.worktree_path}`}
+                          >
+                            <Code2 size={12} /> Open in VS Code
+                          </a>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-zinc-500 hover:underline"
+                            onClick={() =>
+                              void navigator.clipboard?.writeText(task.current_attempt!.worktree_path)
+                            }
+                          >
+                            <Copy size={12} /> copy path
+                          </button>
+                        </span>
+                      ) : null}
+                    </span>
+                  ),
+                },
+                {
+                  k: 'Tests',
+                  v:
+                    task.current_attempt.last_test_ok === null
+                      ? '—'
+                      : task.current_attempt.last_test_ok
+                        ? '✓ passed'
+                        : '✗ failed',
+                },
+              ]}
+            />
+          ) : (
+            <p className="text-xs text-zinc-500">No worktree yet. Start the task to create one.</p>
+          )}
+        </Card>
+      </div>
+
+      <KeyValue
+        items={[
+          { k: 'Task id', v: <span className="font-mono">{task.id}</span> },
+          { k: 'Created', v: formatTime(task.created_at) },
+          ...(task.source_url
+            ? [
+                {
+                  k: 'Issue',
+                  v: (
+                    <a
+                      className="text-accent-600 hover:underline dark:text-accent-300"
+                      href={task.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {task.source_url}
+                    </a>
+                  ),
+                },
+              ]
+            : []),
+        ]}
+      />
     </div>
   );
 }
@@ -276,11 +362,17 @@ function Actions({
   activeRunId?: string;
   run: (fn: () => Promise<unknown>) => void;
   transition: (target: TaskDetail['column'], payload?: { action?: 'retry' }) => () => Promise<unknown>;
-  confirm: (o: { title: string; body: string; danger?: boolean; confirmLabel?: string }) => Promise<boolean>;
+  confirm: (o: {
+    title: string;
+    body: ReactNode;
+    danger?: boolean;
+    confirmLabel?: string;
+  }) => Promise<boolean>;
   pending: boolean;
 }) {
   const buttons: {
     label: string;
+    icon: ReactNode;
     variant?: 'primary' | 'danger' | 'secondary';
     onClick: () => void;
     title?: string;
@@ -289,6 +381,7 @@ function Actions({
   if (busy && activeRunId) {
     buttons.push({
       label: 'Cancel run',
+      icon: <Square size={13} />,
       variant: 'danger',
       onClick: () => run(() => api.runs.cancel(activeRunId)),
     });
@@ -297,6 +390,7 @@ function Actions({
     if (substate !== 'needs_answer' || task.skip_refinement) {
       buttons.push({
         label: task.skip_refinement ? 'Move to To do' : 'Refine → To do',
+        icon: <Sparkles size={13} />,
         variant: 'primary',
         onClick: () => run(transition('todo')),
       });
@@ -304,6 +398,8 @@ function Actions({
     if (!task.skip_refinement) {
       buttons.push({
         label: 'Skip refinement',
+        icon: <Play size={13} />,
+        title: 'Move to To do without asking the agent to plan',
         onClick: () =>
           run(async () => {
             await api.tasks.update(task.id, { skip_refinement: true });
@@ -313,23 +409,37 @@ function Actions({
     }
   }
   if (column === 'todo')
-    buttons.push({ label: '▶ Start', variant: 'primary', onClick: () => run(transition('doing')) });
+    buttons.push({
+      label: 'Start',
+      icon: <Play size={13} />,
+      variant: 'primary',
+      onClick: () => run(transition('doing')),
+    });
   if (column === 'doing' && substate === 'error') {
     buttons.push({
       label: 'Retry (resume session)',
+      icon: <RefreshCw size={13} />,
       variant: 'primary',
       onClick: () => run(transition('doing', { action: 'retry' })),
     });
   }
+  if (column === 'review')
+    buttons.push({
+      label: 'Merge → Done',
+      icon: <Check size={13} />,
+      variant: 'primary',
+      onClick: () => run(transition('done')),
+    });
   if ((column === 'doing' && substate === 'error') || column === 'review') {
     buttons.push({
       label: 'Restart attempt',
-      title: 'Discard worktree and start over with all feedback so far',
+      icon: <RotateCcw size={13} />,
+      title: 'Discard the worktree and start over with all feedback so far',
       onClick: async () => {
         if (
           await confirm({
             title: 'Restart attempt?',
-            body: 'The current worktree and branch are discarded. A new attempt starts with the description, plan and all feedback so far.',
+            body: 'The current worktree and branch are discarded. A new attempt starts from the description, plan and all feedback so far.',
             danger: true,
             confirmLabel: 'Restart',
           })
@@ -339,12 +449,13 @@ function Actions({
     });
     buttons.push({
       label: 'Discard attempt',
+      icon: <Undo2 size={13} />,
       variant: 'danger',
       onClick: async () => {
         if (
           await confirm({
             title: 'Discard attempt?',
-            body: 'Worktree and branch are deleted; the task goes back to To do.',
+            body: 'Worktree and branch are deleted; the task goes back to To do. Comments are kept.',
             danger: true,
             confirmLabel: 'Discard',
           })
@@ -353,15 +464,17 @@ function Actions({
       },
     });
   }
-  if (column === 'review') {
-    buttons.unshift({ label: '✓ Merge → Done', variant: 'primary', onClick: () => run(transition('done')) });
-  }
-  if (column === 'done') {
-    buttons.push({ label: 'Clone task', onClick: () => run(() => api.tasks.clone(task.id)) });
-  }
+  if (column === 'done')
+    buttons.push({
+      label: 'Clone task',
+      icon: <Copy size={13} />,
+      onClick: () => run(() => api.tasks.clone(task.id)),
+    });
   if (column !== 'done' && !busy) {
     buttons.push({
-      label: 'Delete task',
+      label: 'Delete',
+      icon: <Trash2 size={13} />,
+      variant: 'danger',
       onClick: async () => {
         if (
           await confirm({
@@ -386,6 +499,7 @@ function Actions({
           onClick={b.onClick}
           disabled={pending}
           title={b.title}
+          icon={b.icon}
         >
           {b.label}
         </Button>
@@ -411,8 +525,12 @@ function Questions({ task }: { task: TaskDetail }) {
   });
   const allFilled = open.every((q) => answers[q.id]?.trim());
   return (
-    <section className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
-      <h3 className="mb-2 font-medium">The agent needs answers before this task is ready</h3>
+    <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+      <h3 className="mb-1 font-semibold text-sm">The agent needs a few answers before this task is ready</h3>
+      <p className="mb-3 text-xs text-zinc-600 dark:text-zinc-300">
+        Your answers are appended to the description and refinement resumes in the same session. You can also
+        discuss in the Chat tab first.
+      </p>
       <div className="grid gap-3">
         {open.map((q, i) => (
           <Field key={q.id} label={`${i + 1}. ${q.question}`}>
@@ -428,8 +546,10 @@ function Questions({ task }: { task: TaskDetail }) {
         <Button
           variant="primary"
           size="sm"
-          disabled={!allFilled || submit.isPending}
+          disabled={!allFilled}
+          loading={submit.isPending}
           onClick={() => submit.mutate()}
+          icon={<Sparkles size={13} />}
         >
           Submit answers & continue refinement
         </Button>

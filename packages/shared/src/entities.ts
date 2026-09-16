@@ -90,6 +90,8 @@ export const runSchema = z.object({
   resumed_from_session_id: nullableString,
   result_subtype: nullableString,
   structured_output: z.unknown().nullable(),
+  /** Final assistant text of the run (Claude's `result`), used by the Chat tab. */
+  result_text: nullableString,
   cost_usd: z.number().nullable(),
   num_turns: z.number().int().nullable(),
   error_message: nullableString,

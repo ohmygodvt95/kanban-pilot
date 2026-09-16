@@ -78,6 +78,7 @@ export const api = {
     clone: (id: string) => request<Task>(`/tasks/${id}/clone`, { method: 'POST' }),
     addComment: (id: string, input: CreateCommentInput) =>
       request<Comment>(`/tasks/${id}/comments`, json(input)),
+    chat: (id: string, message: string) => request<Task>(`/tasks/${id}/chat`, json({ message })),
     answer: (id: string, qid: string, answer: string) =>
       request<Task>(`/tasks/${id}/questions/${qid}/answer`, json({ answer })),
     restart: (id: string) => request<Task>(`/tasks/${id}/attempts/restart`, { method: 'POST' }),

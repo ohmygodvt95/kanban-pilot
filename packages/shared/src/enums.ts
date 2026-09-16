@@ -39,7 +39,7 @@ export type ExecutorId = z.infer<typeof executorIdSchema>;
 export const attemptStatusSchema = z.enum(['active', 'merged', 'discarded']);
 export type AttemptStatus = z.infer<typeof attemptStatusSchema>;
 
-export const runKindSchema = z.enum(['refine', 'execute', 'followup']);
+export const runKindSchema = z.enum(['refine', 'execute', 'followup', 'chat']);
 export type RunKind = z.infer<typeof runKindSchema>;
 
 export const runStatusSchema = z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled']);
@@ -48,7 +48,7 @@ export type RunStatus = z.infer<typeof runStatusSchema>;
 export const runEventTypeSchema = z.enum(['system', 'assistant', 'user', 'result', 'stderr', 'raw']);
 export type RunEventType = z.infer<typeof runEventTypeSchema>;
 
-export const commentKindSchema = z.enum(['feedback', 'answer', 'note']);
+export const commentKindSchema = z.enum(['feedback', 'answer', 'note', 'chat']);
 export type CommentKind = z.infer<typeof commentKindSchema>;
 
 export const jobStatusSchema = z.enum(['queued', 'running', 'done', 'failed']);

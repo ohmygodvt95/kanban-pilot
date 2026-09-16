@@ -24,5 +24,13 @@ export const MIGRATIONS: EmbeddedMigration[] = [
       "CREATE TABLE `tasks` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`project_id` text NOT NULL,\n\t`title` text NOT NULL,\n\t`description` text DEFAULT '' NOT NULL,\n\t`column` text DEFAULT 'backlog' NOT NULL,\n\t`substate` text,\n\t`position` real DEFAULT 0 NOT NULL,\n\t`executor` text,\n\t`skip_refinement` integer DEFAULT false NOT NULL,\n\t`plan` text,\n\t`refinement_session_id` text,\n\t`refinement_incomplete` integer DEFAULT false NOT NULL,\n\t`current_attempt_id` text,\n\t`last_error` text,\n\t`source_provider` text,\n\t`source_external_id` text,\n\t`source_url` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tFOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade\n);",
       "CREATE INDEX `tasks_project_column_idx` ON `tasks` (`project_id`,`column`);"
     ]
+  },
+  {
+    "tag": "0001_crazy_night_thrasher",
+    "when": 1789535931110,
+    "hash": "24ab4f51ec493fd2444a5d57a9e9213857c10858eb10e9661253168886730e34",
+    "sql": [
+      "ALTER TABLE `runs` ADD `result_text` text;"
+    ]
   }
 ];

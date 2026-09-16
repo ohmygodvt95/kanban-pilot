@@ -1,6 +1,7 @@
 import type { Core } from '@agent-kanban/core';
 import {
   answerQuestionSchema,
+  chatMessageSchema,
   createCommentSchema,
   transitionRequestSchema,
   updateTaskSchema,
@@ -27,6 +28,11 @@ export function taskRoutes(core: Core) {
     const { target, payload } = c.req.valid('json');
     const task = await core.tasks.transition(c.req.param('id'), target, 'user', payload ?? {});
     return c.json(task);
+  });
+
+  /** Free-form instruction to the agent (see TaskService.chat). */
+  app.post('/:id/chat', zValidator('json', chatMessageSchema), async (c) => {
+    return c.json(await core.tasks.chat(c.req.param('id'), c.req.valid('json').message));
   });
 
   app.post('/:id/clone', async (c) => c.json(await core.tasks.clone(c.req.param('id')), 201));

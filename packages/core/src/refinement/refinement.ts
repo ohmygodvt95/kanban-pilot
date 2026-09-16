@@ -22,6 +22,12 @@ export const refineOutputSchema = z.object({
 });
 export type RefineOutput = z.infer<typeof refineOutputSchema>;
 
+export const chatOutputSchema = z.object({
+  reply: z.string().default(''),
+  plan: z.string().nullable().default(null),
+});
+export type ChatOutput = z.infer<typeof chatOutputSchema>;
+
 export interface RefinementDeps {
   runs: RunService;
   tasks: () => TaskService;
@@ -107,6 +113,28 @@ export class RefinementService {
       plan: output.plan,
       refinement_session_id: run.session_id ?? undefined,
     });
+  }
+
+  /** Post-run handling for planner chat runs: store the reply's plan, never change the column. */
+  async handleChatFinished(run: Run): Promise<void> {
+    const store = this.ctx.store;
+    const task = await store.getTask(run.task_id);
+    if (run.status !== 'succeeded') {
+      await store.updateTask(task.id, { last_error: run.error_message ?? `chat ${run.status}` });
+      return;
+    }
+    const output = await this.parseChatOutput(run);
+    const patch: { refinement_session_id?: string; plan?: string; last_error: null } = { last_error: null };
+    if (run.session_id) patch.refinement_session_id = run.session_id;
+    if (output?.plan?.trim()) patch.plan = output.plan.trim();
+    await store.updateTask(task.id, patch);
+  }
+
+  private async parseChatOutput(run: Run): Promise<ChatOutput | null> {
+    let candidate: unknown = run.structured_output ?? undefined;
+    if (candidate === undefined || candidate === null) candidate = extractJsonObject(run.result_text ?? '');
+    const parsed = chatOutputSchema.safeParse(candidate);
+    return parsed.success ? parsed.data : null;
   }
 
   /** Record an answer; once every question of the latest round is answered, resume refinement. */

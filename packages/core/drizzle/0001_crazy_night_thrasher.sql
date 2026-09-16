@@ -1,0 +1,1 @@
+ALTER TABLE `runs` ADD `result_text` text;

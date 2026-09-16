@@ -27,6 +27,14 @@ Everything is stored in one SQLite file (`~/.config/agent-kanban/db.sqlite`); wo
 | **Review** | Inspect the diff, comment on lines, add general feedback. **Send feedback & re-run** resumes the session with the numbered feedback. **Merge → Done** merges `--no-ff` into the base branch (in your checkout if it is clean and on the base branch, otherwise in a temporary worktree). *Restart attempt* starts over with all feedback so far; *Discard* throws the worktree away. |
 | **Done** | Immutable. Use *Clone task* to continue. |
 
+**Chat tab.** Every task has a conversation view built from its runs and comments, plus a composer:
+
+- In **Review** or **Doing (error)** a message is sent to the agent as feedback and the same session is resumed
+  (`POST /tasks/:id/chat` → followup / retry run). The task goes back to Review when the agent finishes.
+- In **Backlog** / **To do** the message goes to the *planner* (read-only refine session): it answers in the chat and
+  may return an updated plan; the task does not move.
+- While the agent is running the composer is disabled and the agent's latest text streams into the conversation.
+
 Invariants: the agent never moves cards (the system does, from process exit codes + diff + tests);
 every CLI invocation is a `run` with its full command, event stream, session id and cost;
 the main working tree of your repo is never touched by an agent.

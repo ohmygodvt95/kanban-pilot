@@ -10,6 +10,7 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { useQueryClient } from '@tanstack/react-query';
+import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ApiError, api } from '../../api/client';
 import { keys, upsertTask } from '../../api/queries';
@@ -24,11 +25,13 @@ export function Board({
   tasks,
   onOpen,
   onNewTask,
+  selectedId,
 }: {
   project: Project;
   tasks: Task[];
   onOpen: (id: string) => void;
   onNewTask: () => void;
+  selectedId: string | null;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -131,7 +134,7 @@ export function Board({
       onDragCancel={() => setActiveId(null)}
     >
       {confirmNode}
-      <div className="flex h-full gap-3 overflow-x-auto p-3">
+      <div className="scrollbar-thin flex h-full gap-3 overflow-x-auto p-3">
         {COLUMNS.map((c) => (
           <ColumnView
             key={c}
@@ -139,6 +142,7 @@ export function Board({
             tasks={byColumn[c]}
             onOpen={onOpen}
             activeId={activeId}
+            selectedId={selectedId}
             defaultExecutor={project.default_executor}
             header={
               c === 'backlog' ? (

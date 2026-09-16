@@ -1,3 +1,4 @@
+import { AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
 
 export interface ToastItem {
@@ -30,6 +31,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     }),
     [push],
   );
+  const icons = {
+    error: <AlertCircle size={16} />,
+    success: <CheckCircle2 size={16} />,
+    info: <Info size={16} />,
+  };
   return (
     <ToastContext.Provider value={api}>
       {children}
@@ -37,15 +43,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {items.map((t) => (
           <div
             key={t.id}
-            className={`pointer-events-auto rounded-md px-3 py-2 text-sm shadow-lg ${
+            className={`pointer-events-auto flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm shadow-lg backdrop-blur ${
               t.kind === 'error'
-                ? 'bg-red-600 text-white'
+                ? 'border-red-200 bg-red-50/95 text-red-900 dark:border-red-900 dark:bg-red-950/90 dark:text-red-100'
                 : t.kind === 'success'
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900'
+                  ? 'border-emerald-200 bg-emerald-50/95 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/90 dark:text-emerald-100'
+                  : 'border-zinc-200 bg-white/95 text-zinc-800 dark:border-zinc-700 dark:bg-zinc-800/95 dark:text-zinc-100'
             }`}
           >
-            {t.text}
+            <span className="mt-0.5 shrink-0">{icons[t.kind]}</span>
+            <span>{t.text}</span>
           </div>
         ))}
       </div>

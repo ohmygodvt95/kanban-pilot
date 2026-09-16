@@ -26,6 +26,44 @@ Yêu cầu:
 - questions: tối đa 5 câu, chỉ hỏi điều thực sự ảnh hưởng tới cách làm. Không hỏi điều có thể tự tìm trong code.
 - plan: các bước cụ thể, file sẽ đụng tới, rủi ro.`;
 
+export const CHAT_SCHEMA = {
+  type: 'object',
+  required: ['reply', 'plan'],
+  properties: {
+    reply: { type: 'string', description: 'Answer to the user, markdown' },
+    plan: { type: ['string', 'null'], description: 'Full updated plan if it changed, else null' },
+  },
+} as const;
+
+export const CHAT_JSON_FALLBACK = `
+
+Trả lời DUY NHẤT một JSON object (không code fence) theo schema:
+${JSON.stringify(CHAT_SCHEMA)}`;
+
+/** Chat with the planner (read-only) before the task runs. */
+export function buildPlannerChatPrompt(
+  task: Pick<Task, 'title' | 'description' | 'plan'>,
+  message: string,
+  qa: QA[],
+  opts: { structuredOutputSupported: boolean; resuming: boolean },
+): string {
+  const context = opts.resuming
+    ? ''
+    : `\n\nBối cảnh task:\n# ${task.title}\n${task.description || '(không có mô tả)'}${task.plan ? `\n\n## Plan hiện tại\n${task.plan}` : ''}${
+        qa.filter((q) => q.answer).length
+          ? `\n\n## Q&A trước đó\n${qa
+              .filter((q) => q.answer)
+              .map((q) => `- Q: ${q.question}\n  A: ${q.answer}`)
+              .join('\n')}`
+          : ''
+      }`;
+  const body = `Người dùng nhắn (chat với planner, KHÔNG sửa file, chỉ đọc code nếu cần):
+${message}${context}
+
+Trả lời ngắn gọn trong "reply" (markdown). Nếu yêu cầu này làm thay đổi cách thực hiện, đưa TOÀN BỘ plan đã cập nhật vào "plan"; nếu không thì plan = null.`;
+  return opts.structuredOutputSupported ? body : body + CHAT_JSON_FALLBACK;
+}
+
 export const REFINE_JSON_FALLBACK = `
 
 Trả lời DUY NHẤT một JSON object (không có text khác, không code fence) theo schema:
@@ -127,10 +165,11 @@ ${truncated}
 ${buildFollowupPrompt(comments)}`;
 }
 
-export function buildRetryPrompt(errorMessage: string | null): string {
+export function buildRetryPrompt(errorMessage: string | null, extraFeedback: Comment[] = []): string {
+  const extra = extraFeedback.length ? `\n\nNgười dùng bổ sung:\n${formatFeedbackList(extraFeedback)}\n` : '';
   return `Lần chạy trước kết thúc với lỗi:
 ${errorMessage ?? '(không rõ)'}
-
+${extra}
 Hãy tiếp tục công việc từ chỗ đang dở, xử lý nguyên nhân lỗi nếu nó thuộc về bạn, rồi hoàn thành task.
 
 ${EXECUTE_CONSTRAINTS}`;

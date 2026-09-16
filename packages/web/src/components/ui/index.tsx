@@ -1,65 +1,138 @@
-import type { Substate } from '@agent-kanban/shared';
-import { type ButtonHTMLAttributes, type ReactNode, useCallback, useState } from 'react';
-import { SUBSTATE_LABELS, SUBSTATE_STYLE } from '../../lib/state';
+import type { Column, Substate } from '@agent-kanban/shared';
+import { Loader2, X } from 'lucide-react';
+import { type ButtonHTMLAttributes, type ReactNode, useCallback, useEffect, useState } from 'react';
+import { COLUMN_LABELS, COLUMN_PILL, SUBSTATE_LABELS, SUBSTATE_STYLE } from '../../lib/state';
 
-type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
+type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'subtle';
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-400',
+  primary:
+    'bg-accent-600 text-white shadow-sm hover:bg-accent-700 disabled:bg-accent-300 dark:disabled:bg-accent-900',
   secondary:
-    'bg-white text-zinc-800 border border-zinc-300 hover:bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-700',
-  danger: 'bg-red-600 text-white hover:bg-red-700 disabled:bg-red-400',
-  ghost: 'text-zinc-700 hover:bg-zinc-200 dark:text-zinc-200 dark:hover:bg-zinc-700',
+    'bg-white text-zinc-800 border border-zinc-300 shadow-sm hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-700',
+  danger:
+    'bg-white text-red-700 border border-red-300 shadow-sm hover:bg-red-50 dark:bg-zinc-800 dark:text-red-300 dark:border-red-800 dark:hover:bg-red-950/40',
+  ghost:
+    'text-zinc-600 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-700 dark:hover:text-white',
+  subtle:
+    'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700',
 };
 
 export function Button({
   variant = 'secondary',
   size = 'md',
   className = '',
+  loading,
+  icon,
+  children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: Variant;
+  size?: 'xs' | 'sm' | 'md';
+  loading?: boolean;
+  icon?: ReactNode;
+}) {
+  const sizes = {
+    xs: 'h-6 px-2 text-[11px] gap-1',
+    sm: 'h-7 px-2.5 text-xs gap-1.5',
+    md: 'h-8 px-3 text-sm gap-2',
+  };
   return (
     <button
       type="button"
-      className={`inline-flex items-center gap-1 rounded-md font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
-        size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'
-      } ${VARIANTS[variant]} ${className}`}
+      className={`inline-flex items-center justify-center rounded-md font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400 disabled:cursor-not-allowed disabled:opacity-60 ${sizes[size]} ${VARIANTS[variant]} ${className}`}
+      {...props}
+    >
+      {loading ? <Loader2 size={14} className="animate-spin" /> : icon}
+      {children}
+    </button>
+  );
+}
+
+export function IconButton({
+  label,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-200/70 hover:text-zinc-900 dark:hover:bg-zinc-700 dark:hover:text-white ${className}`}
       {...props}
     />
   );
 }
 
-export function Badge({ substate, extra }: { substate: Substate | null; extra?: string }) {
+export function Badge({ substate, className = '' }: { substate: Substate | null; className?: string }) {
   if (!substate) return null;
+  const live = substate === 'running' || substate === 'refining';
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-[11px] ${SUBSTATE_STYLE[substate]}`}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium text-[11px] leading-4 ${SUBSTATE_STYLE[substate]} ${className}`}
     >
-      {substate === 'running' || substate === 'refining' ? <Spinner size={10} /> : null}
+      {live ? <Loader2 size={10} className="animate-spin" /> : null}
       {SUBSTATE_LABELS[substate]}
-      {extra ? <span className="opacity-70">{extra}</span> : null}
+    </span>
+  );
+}
+
+export function ColumnPill({ column }: { column: Column }) {
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 font-semibold text-[11px] uppercase tracking-wide ${COLUMN_PILL[column]}`}
+    >
+      {COLUMN_LABELS[column]}
+    </span>
+  );
+}
+
+export function Chip({
+  children,
+  className = '',
+  title,
+}: {
+  children: ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-700/60 dark:text-zinc-300 ${className}`}
+    >
+      {children}
     </span>
   );
 }
 
 export function Spinner({ size = 14, className = '' }: { size?: number; className?: string }) {
+  return <Loader2 size={size} className={`animate-spin ${className}`} aria-label="loading" />;
+}
+
+export function Card({
+  children,
+  className = '',
+  title,
+  actions,
+}: {
+  children: ReactNode;
+  className?: string;
+  title?: ReactNode;
+  actions?: ReactNode;
+}) {
   return (
-    <svg
-      className={`animate-spin ${className}`}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-label="loading"
+    <section
+      className={`rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900 ${className}`}
     >
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
-      <path
-        d="M4 12a8 8 0 018-8"
-        stroke="currentColor"
-        strokeWidth="4"
-        strokeLinecap="round"
-        className="opacity-90"
-      />
-    </svg>
+      {title ? (
+        <header className="flex items-center justify-between gap-2 border-zinc-100 border-b px-4 py-2.5 dark:border-zinc-800">
+          <h3 className="font-semibold text-sm text-zinc-800 dark:text-zinc-100">{title}</h3>
+          {actions}
+        </header>
+      ) : null}
+      <div className="p-4">{children}</div>
+    </section>
   );
 }
 
@@ -68,27 +141,43 @@ export function Modal({
   children,
   onClose,
   footer,
+  wide,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   footer?: ReactNode;
+  wide?: boolean;
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-900/40 p-4 backdrop-blur-[2px]"
       onMouseDown={onClose}
       role="presentation"
     >
       <div
-        className="w-full max-w-lg rounded-lg bg-white p-4 shadow-xl dark:bg-zinc-900"
+        className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900`}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
-        <h2 className="mb-3 font-semibold text-base">{title}</h2>
-        <div className="text-sm">{children}</div>
-        {footer ? <div className="mt-4 flex justify-end gap-2">{footer}</div> : null}
+        <header className="flex items-center justify-between border-zinc-100 border-b px-5 py-3 dark:border-zinc-800">
+          <h2 className="font-semibold text-base">{title}</h2>
+          <IconButton label="Close" onClick={onClose}>
+            <X size={16} />
+          </IconButton>
+        </header>
+        <div className="px-5 py-4 text-sm">{children}</div>
+        {footer ? (
+          <footer className="flex justify-end gap-2 border-zinc-100 border-t px-5 py-3 dark:border-zinc-800">
+            {footer}
+          </footer>
+        ) : null}
       </div>
     </div>
   );
@@ -108,30 +197,18 @@ export function useConfirm(): [(opts: ConfirmOptions) => Promise<boolean>, React
     (opts: ConfirmOptions) => new Promise<boolean>((resolve) => setState({ ...opts, resolve })),
     [],
   );
+  const close = (v: boolean) => {
+    state?.resolve(v);
+    setState(null);
+  };
   const node = state ? (
     <Modal
       title={state.title}
-      onClose={() => {
-        state.resolve(false);
-        setState(null);
-      }}
+      onClose={() => close(false)}
       footer={
         <>
-          <Button
-            onClick={() => {
-              state.resolve(false);
-              setState(null);
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant={state.danger ? 'danger' : 'primary'}
-            onClick={() => {
-              state.resolve(true);
-              setState(null);
-            }}
-          >
+          <Button onClick={() => close(false)}>Cancel</Button>
+          <Button variant={state.danger ? 'danger' : 'primary'} onClick={() => close(true)}>
             {state.confirmLabel ?? 'Confirm'}
           </Button>
         </>
@@ -143,10 +220,22 @@ export function useConfirm(): [(opts: ConfirmOptions) => Promise<boolean>, React
   return [confirm, node];
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+export function Field({
+  label,
+  children,
+  hint,
+  inline,
+}: {
+  label: ReactNode;
+  children: ReactNode;
+  hint?: ReactNode;
+  inline?: boolean;
+}) {
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
+    <label className={`block text-sm ${inline ? 'flex items-center gap-2' : ''}`}>
+      <span className={`${inline ? '' : 'mb-1 block'} font-medium text-zinc-700 dark:text-zinc-300`}>
+        {label}
+      </span>
       {children}
       {hint ? <span className="mt-1 block text-xs text-zinc-500">{hint}</span> : null}
     </label>
@@ -154,12 +243,59 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 }
 
 export const inputClass =
-  'w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-800';
+  'w-full rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm shadow-sm outline-none transition placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/30 disabled:bg-zinc-100 disabled:text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:disabled:bg-zinc-800/60';
 
-export function EmptyState({ children }: { children: ReactNode }) {
+export function Switch({
+  checked,
+  onChange,
+  label,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  disabled?: boolean;
+}) {
   return (
-    <div className="rounded-md border border-zinc-300 border-dashed p-6 text-center text-sm text-zinc-500 dark:border-zinc-700">
-      {children}
+    <label
+      className={`flex cursor-pointer items-center gap-2 text-sm ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
+    >
+      <span
+        role="switch"
+        aria-checked={checked}
+        tabIndex={0}
+        onKeyDown={(e) => (e.key === ' ' || e.key === 'Enter') && !disabled && onChange(!checked)}
+        onClick={() => !disabled && onChange(!checked)}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition ${checked ? 'bg-accent-600' : 'bg-zinc-300 dark:bg-zinc-600'}`}
+      >
+        <span
+          className={`inline-block h-4 w-4 rounded-full bg-white shadow transition ${checked ? 'translate-x-4.5' : 'translate-x-0.5'}`}
+        />
+      </span>
+      <span>{label}</span>
+    </label>
+  );
+}
+
+export function EmptyState({ children, icon }: { children: ReactNode; icon?: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-xl border border-zinc-300 border-dashed p-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+      {icon}
+      <div>{children}</div>
     </div>
+  );
+}
+
+export function KeyValue({ items }: { items: { k: ReactNode; v: ReactNode }[] }) {
+  return (
+    <dl className="grid grid-cols-[minmax(110px,auto)_1fr] gap-x-4 gap-y-1.5 text-xs">
+      {items.map((it, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: static list
+        <div key={i} className="contents">
+          <dt className="text-zinc-500">{it.k}</dt>
+          <dd className="min-w-0 break-words text-zinc-800 dark:text-zinc-200">{it.v}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }

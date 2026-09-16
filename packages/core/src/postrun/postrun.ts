@@ -32,6 +32,10 @@ export class PostRunPipeline {
       await this.deps.refinement.handleRunFinished(run);
       return;
     }
+    if (run.kind === 'chat') {
+      await this.deps.refinement.handleChatFinished(run);
+      return;
+    }
     await this.handleExecution(run);
   }
 

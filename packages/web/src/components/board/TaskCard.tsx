@@ -1,8 +1,17 @@
 import type { Task } from '@agent-kanban/shared';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { formatCost } from '../../lib/format';
-import { EXECUTOR_ICONS } from '../../lib/state';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  GitBranch,
+  HelpCircle,
+  Link2,
+  MessageSquare,
+  XCircle,
+} from 'lucide-react';
+import { formatCost, relativeTime } from '../../lib/format';
+import { EXECUTOR_ICONS, EXECUTOR_LABELS, isBusy } from '../../lib/state';
 import { Badge } from '../ui';
 
 export function TaskCard({
@@ -10,11 +19,13 @@ export function TaskCard({
   onOpen,
   dragging,
   defaultExecutor,
+  selected,
 }: {
   task: Task;
   onOpen: (id: string) => void;
   dragging?: boolean;
   defaultExecutor: string;
+  selected?: boolean;
 }) {
   const disabled = task.column === 'done';
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -24,6 +35,12 @@ export function TaskCard({
   });
   const style = { transform: CSS.Translate.toString(transform), transition };
   const executor = task.executor ?? defaultExecutor;
+  const busy = isBusy(task);
+  const snippet =
+    task.description
+      .split('\n')
+      .find((l) => l.trim() && !l.startsWith('#'))
+      ?.trim() ?? '';
   return (
     <div
       ref={setNodeRef}
@@ -31,34 +48,63 @@ export function TaskCard({
       {...attributes}
       {...listeners}
       onClick={() => onOpen(task.id)}
-      className={`group cursor-pointer rounded-md border bg-white p-2.5 text-sm shadow-sm transition-shadow hover:shadow-md dark:bg-zinc-900 ${
-        isDragging || dragging ? 'opacity-50' : ''
-      } ${task.last_error ? 'border-red-300 dark:border-red-800' : 'border-zinc-200 dark:border-zinc-700'}`}
+      className={`group relative cursor-pointer rounded-lg border bg-white p-3 text-sm shadow-sm transition hover:shadow-md dark:bg-zinc-800 ${
+        isDragging || dragging ? 'opacity-40' : ''
+      } ${
+        task.last_error
+          ? 'border-red-300 dark:border-red-800'
+          : selected
+            ? 'border-accent-400 ring-2 ring-accent-400/30'
+            : 'border-zinc-200 hover:border-accent-300 dark:border-zinc-700 dark:hover:border-accent-600'
+      } ${busy ? 'ak-running' : ''}`}
     >
-      <div className="mb-1.5 flex items-start justify-between gap-2">
+      <div className="mb-1 flex items-start justify-between gap-2">
         <span className="line-clamp-2 font-medium leading-snug">{task.title}</span>
-        <span className="shrink-0 text-xs text-zinc-400" title={`executor: ${executor}`}>
+        <span
+          className="shrink-0 text-xs text-zinc-400"
+          title={`executor: ${EXECUTOR_LABELS[executor] ?? executor}`}
+        >
           {EXECUTOR_ICONS[executor] ?? executor}
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+      {snippet ? (
+        <p className="mb-2 line-clamp-2 text-[12px] text-zinc-500 leading-snug dark:text-zinc-400">
+          {snippet}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-1.5">
         <Badge substate={task.substate} />
         {task.refinement_incomplete ? (
           <span
-            className="rounded bg-amber-100 px-1 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100"
+            className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-900 dark:bg-amber-900/60 dark:text-amber-100"
             title="Refined with open questions"
           >
-            open questions
+            <HelpCircle size={11} /> open questions
           </span>
         ) : null}
         {task.unconsumed_feedback ? (
           <span
-            className="rounded bg-blue-100 px-1 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200"
-            title="feedback not yet sent"
+            className="inline-flex items-center gap-1 rounded-full bg-accent-100 px-2 py-0.5 text-[11px] text-accent-700 dark:bg-accent-900/60 dark:text-accent-200"
+            title="feedback not yet sent to the agent"
           >
-            💬 {task.unconsumed_feedback}
+            <MessageSquare size={11} /> {task.unconsumed_feedback}
           </span>
         ) : null}
+        {task.column === 'review' && task.substate === 'tests_failed' ? (
+          <XCircle size={14} className="text-red-500" aria-label="tests failed" />
+        ) : null}
+        {task.column === 'review' && task.substate === 'pending' ? (
+          <CheckCircle2 size={14} className="text-emerald-500" aria-label="ready" />
+        ) : null}
+      </div>
+      {task.last_error ? (
+        <div className="mt-2 flex items-start gap-1 text-[11px] text-red-600 dark:text-red-400">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          <span className="line-clamp-2">{task.last_error}</span>
+        </div>
+      ) : null}
+      <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-400">
+        {task.current_attempt_id ? <GitBranch size={11} aria-label="has attempt" /> : null}
         {task.total_cost_usd ? <span title="accumulated cost">{formatCost(task.total_cost_usd)}</span> : null}
         {task.source_url ? (
           <a
@@ -66,18 +112,15 @@ export function TaskCard({
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="hover:underline"
+            className="hover:text-accent-600"
             title={task.source_url}
           >
-            🔗
+            <Link2 size={11} />
           </a>
         ) : null}
+        <span className="flex-1" />
+        <span title={task.updated_at}>{relativeTime(task.updated_at)}</span>
       </div>
-      {task.last_error ? (
-        <div className="mt-1.5 line-clamp-2 text-[11px] text-red-600 dark:text-red-400">
-          {task.last_error}
-        </div>
-      ) : null}
     </div>
   );
 }

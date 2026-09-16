@@ -32,8 +32,11 @@
    and emits `run.event`. On exit the run row gets status/exit code/session/cost and a `post_run` job is queued.
 5. `PostRunPipeline` moves the task: failed/cancelled or empty diff → `DOING(error)`; otherwise commit, tests,
    push, `REVIEW(pending|tests_failed)`, optional auto-merge. Refine runs go to `RefinementService`.
-6. Feedback: comments with `consumed_by_run_id = NULL` gate `REVIEW → DOING`; the followup run resumes the
-   last session id of the attempt and marks the comments consumed.
+6. Feedback: comments (`feedback` from the diff, `chat` from the Chat tab) with `consumed_by_run_id = NULL` gate
+   `REVIEW → DOING`; the followup run resumes the last session id of the attempt and marks the comments consumed.
+   `TaskService.chat()` routes a free-form message: REVIEW → followup, DOING(error) → retry (message appended),
+   BACKLOG/TODO → a `chat` run in refine mode that resumes the refinement session and may update `tasks.plan`.
+   `runs.result_text` (the CLI's final text) is what the Chat tab shows as the agent's reply.
 
 Recovery on start: stale `running` jobs/runs from a dead process become `failed` (task → `DOING(error)`),
 `git worktree prune` runs per project and attempts whose worktree vanished are marked `discarded`.

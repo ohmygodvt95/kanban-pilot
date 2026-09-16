@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/client';
 import { keys, upsertTask, useDiff } from '../../api/queries';
-import { Button, inputClass } from '../ui';
+import { Button, EmptyState, inputClass } from '../ui';
 import { useToast } from '../ui/Toast';
 
 interface FilePatch {
@@ -101,7 +101,16 @@ export function DiffTab({ task }: { task: TaskDetail }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1">
-        <aside className="scrollbar-thin w-56 shrink-0 overflow-y-auto border-zinc-200 border-r text-xs dark:border-zinc-800">
+        <aside className="scrollbar-thin w-60 shrink-0 overflow-y-auto border-zinc-200 border-r bg-white text-xs dark:border-zinc-800 dark:bg-zinc-900">
+          {diff.data ? (
+            <div className="border-zinc-100 border-b px-3 py-2 text-[11px] text-zinc-500 dark:border-zinc-800">
+              {diff.data.files.length} files ·{' '}
+              <span className="text-emerald-600">
+                +{diff.data.files.reduce((s, f) => s + f.additions, 0)}
+              </span>{' '}
+              <span className="text-red-600">-{diff.data.files.reduce((s, f) => s + f.deletions, 0)}</span>
+            </div>
+          ) : null}
           {diff.isLoading ? <div className="p-3 text-zinc-500">Loading diff…</div> : null}
           {diff.isError ? <div className="p-3 text-red-600">{(diff.error as Error).message}</div> : null}
           {diff.data?.files.length === 0 ? <div className="p-3 text-zinc-500">No changes.</div> : null}
@@ -115,7 +124,7 @@ export function DiffTab({ task }: { task: TaskDetail }) {
             />
           ))}
         </aside>
-        <div className="scrollbar-thin min-w-0 flex-1 overflow-auto">
+        <div className="scrollbar-thin min-w-0 flex-1 overflow-auto bg-white dark:bg-zinc-900">
           {selected ? (
             selected.binary || !selected.hunks ? (
               <div className="p-4 text-sm text-zinc-500">
@@ -161,7 +170,7 @@ export function DiffTab({ task }: { task: TaskDetail }) {
           ) : null}
         </div>
       </div>
-      <div className="border-zinc-200 border-t p-3 text-sm dark:border-zinc-800">
+      <div className="border-zinc-200 border-t bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mb-2 flex items-center justify-between">
           <h3 className="font-medium">
             Feedback{' '}

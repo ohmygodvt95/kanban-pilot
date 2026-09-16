@@ -336,3 +336,117 @@ describe('core end-to-end with fake executor', () => {
     await expect(core.projects.create({ repo_path: repo })).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 });
+
+describe('chat with the agent', () => {
+  let root: string;
+  let repo: string;
+  let core: Core;
+  const waitState = (id: string, column: Task['column'], substate?: Task['substate']) =>
+    core.events.waitFor(
+      'task.updated',
+      (p) =>
+        p.task.id === id &&
+        p.task.column === column &&
+        (substate === undefined || p.task.substate === substate),
+      15_000,
+    );
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'ak-chat-'));
+    repo = join(root, 'repo');
+    await makeRepo(repo);
+    core = createCore({
+      paths: {
+        dbPath: join(root, 'db.sqlite'),
+        worktreesRoot: join(root, 'wt'),
+        userTemplatesDir: join(root, 'tpl'),
+        configDir: root,
+      },
+      executors: { claude: new FakeClaudeAdapter() },
+      runner: { pollIntervalMs: 50 },
+    });
+    await core.start();
+  });
+  afterEach(async () => {
+    await core.stop({ killProcesses: true });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('planner chat in TODO resumes the refinement session and can update the plan', async () => {
+    const project = await core.projects.create({ repo_path: repo });
+    const task = await core.tasks.create(project.id, { title: 'chatty', description: 'do something' });
+    const readyP = waitState(task.id, 'todo', 'ready');
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const ready = (await readyP).task;
+    expect(ready.refinement_session_id).toBeTruthy();
+
+    const done1 = core.events.waitFor(
+      'run.updated',
+      (p) => p.run.kind === 'chat' && p.run.status === 'succeeded',
+      15_000,
+    );
+    await core.tasks.chat(task.id, 'Why did you choose agent.txt?');
+    await expect(core.tasks.chat(task.id, 'again')).rejects.toMatchObject({ code: 'CONFLICT' });
+    const run1 = (await done1).run;
+    expect(run1.resumed_from_session_id).toBe(ready.refinement_session_id);
+    expect(run1.result_text).toContain('Planner reply');
+    await core.runner.idle();
+    let detail = await core.tasks.detail(task.id);
+    expect(detail.plan).toBe(ready.plan); // no plan change
+    expect(detail.comments.at(-1)).toMatchObject({ kind: 'chat', consumed_by_run_id: run1.id });
+    expect(detail.column).toBe('todo');
+
+    const done2 = core.events.waitFor(
+      'run.updated',
+      (p) => p.run.kind === 'chat' && p.run.status === 'succeeded' && p.run.id !== run1.id,
+      15_000,
+    );
+    await core.tasks.chat(task.id, 'Change the plan: also add tests');
+    await done2;
+    await core.runner.idle();
+    detail = await core.tasks.detail(task.id);
+    expect(detail.plan).toContain('Updated plan because');
+    expect(detail.column).toBe('todo');
+  });
+
+  it('chat in REVIEW becomes feedback and resumes the attempt session; chat in DOING(error) retries with the message', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const task = await core.tasks.create(project.id, { title: 'review chat', description: 'x' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const reviewP = waitState(task.id, 'review');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await reviewP;
+    const queued = await core.tasks.chat(task.id, 'please rename the file');
+    expect(queued.column).toBe('doing');
+    await waitState(task.id, 'review');
+    const detail = await core.tasks.detail(task.id);
+    const followup = detail.runs.at(-1)!;
+    expect(followup.kind).toBe('followup');
+    expect(followup.prompt).toContain('1. please rename the file');
+    expect(followup.resumed_from_session_id).toBe(detail.runs[0]!.session_id);
+    expect(detail.comments[0]).toMatchObject({ kind: 'chat', consumed_by_run_id: followup.id });
+    expect(followup.result_text).toContain('Done');
+
+    // error path
+    const t2 = await core.tasks.create(project.id, { title: 'err chat', description: 'FAKE:nochange' });
+    await core.tasks.transition(t2.id, 'todo', 'user');
+    const errP = waitState(t2.id, 'doing', 'error');
+    await core.tasks.transition(t2.id, 'doing', 'user');
+    await errP;
+    expect((await core.tasks.chat(t2.id, 'just try again')).substate).toBe('queued');
+    await waitState(t2.id, 'doing', 'error');
+    const d2 = await core.tasks.detail(t2.id);
+    expect(d2.runs.at(-1)?.prompt).toContain('Người dùng bổ sung:\n1. just try again');
+    expect(d2.comments[0]?.consumed_by_run_id).toBe(d2.runs.at(-1)?.id);
+  });
+
+  it('rejects chat on DONE tasks', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const task = await core.tasks.create(project.id, { title: 'done', description: 'x' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const reviewP = waitState(task.id, 'review');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await reviewP;
+    await core.tasks.transition(task.id, 'done', 'user');
+    await expect(core.tasks.chat(task.id, 'hi')).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
+  });
+});
