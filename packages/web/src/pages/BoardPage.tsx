@@ -1,7 +1,7 @@
 import type { Column, ExecutorId, ExternalIssue, Task, TaskKind, TaskPriority } from '@agent-kanban/shared';
 import { EXECUTOR_IDS, TASK_KINDS, TASK_PRIORITIES } from '@agent-kanban/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, Search, Trash2, X } from 'lucide-react';
+import { Download, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
@@ -10,7 +10,7 @@ import { useProjectEvents } from '../api/sse';
 import { Board } from '../components/board/Board';
 import { TaskDrawer } from '../components/drawer/TaskDrawer';
 import { Shell } from '../components/Shell';
-import { Button, DangerConfirm, Field, inputClass, Modal, Switch } from '../components/ui';
+import { Button, DangerConfirm, Field, IconButton, inputClass, Modal, Switch } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { EXECUTOR_LABELS } from '../lib/state';
 import { KIND_LABELS, PRIORITY_LABELS } from '../lib/taskmeta';
@@ -150,102 +150,126 @@ export function BoardPage() {
       }
     : null;
 
+  const [showFilters, setShowFilters] = useState(false);
+  const searchBox = (
+    <>
+      <Search size={13} className="pointer-events-none absolute top-2.5 left-2 text-zinc-400" />
+      <input
+        ref={searchRef}
+        aria-label="Search tasks"
+        className={`${inputClass} h-8 py-1 pr-7 pl-7 text-xs shadow-none`}
+        placeholder="Search tasks  ( / )"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {query ? (
+        <button
+          type="button"
+          aria-label="Clear search"
+          className="absolute top-2 right-2 text-zinc-400 hover:text-zinc-700"
+          onClick={() => setQuery('')}
+        >
+          <X size={13} />
+        </button>
+      ) : null}
+    </>
+  );
+  const filterControls = (
+    <>
+      {QUICK.map((q) => (
+        <button
+          key={q.id}
+          type="button"
+          title={q.title}
+          onClick={() => setQuick(q.id)}
+          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] transition ${quick === q.id ? 'bg-accent-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'}`}
+        >
+          {q.label}
+        </button>
+      ))}
+      <select
+        aria-label="Executor filter"
+        className="h-7 shrink-0 rounded-full border-0 bg-zinc-100 px-2 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+        value={executor}
+        onChange={(e) => setExecutor(e.target.value as ExecutorId | '')}
+      >
+        <option value="">any executor</option>
+        {EXECUTOR_IDS.map((id) => (
+          <option key={id} value={id}>
+            {EXECUTOR_LABELS[id] ?? id}
+          </option>
+        ))}
+      </select>
+    </>
+  );
+
   return (
     <Shell
       projectId={projectId}
       live={sse}
       center={
         <>
-          <div className="relative min-w-0 max-w-xs flex-1">
-            <Search size={13} className="pointer-events-none absolute top-2.5 left-2 text-zinc-400" />
-            <input
-              ref={searchRef}
-              aria-label="Search tasks"
-              className={`${inputClass} h-8 py-1 pr-7 pl-7 text-xs shadow-none`}
-              placeholder="Search tasks  ( / )"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {query ? (
-              <button
-                type="button"
-                aria-label="Clear search"
-                className="absolute top-2 right-2 text-zinc-400 hover:text-zinc-700"
-                onClick={() => setQuery('')}
-              >
-                <X size={13} />
-              </button>
-            ) : null}
-          </div>
-          <div className="hidden items-center gap-1 md:flex">
-            {QUICK.map((q) => (
-              <button
-                key={q.id}
-                type="button"
-                title={q.title}
-                onClick={() => setQuick(q.id)}
-                className={`rounded-full px-2.5 py-1 text-[11px] transition ${quick === q.id ? 'bg-accent-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'}`}
-              >
-                {q.label}
-              </button>
-            ))}
-            <select
-              aria-label="Executor filter"
-              className="h-7 rounded-full border-0 bg-zinc-100 px-2 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-              value={executor}
-              onChange={(e) => setExecutor(e.target.value as ExecutorId | '')}
-            >
-              <option value="">any executor</option>
-              {EXECUTOR_IDS.map((id) => (
-                <option key={id} value={id}>
-                  {EXECUTOR_LABELS[id] ?? id}
-                </option>
-              ))}
-            </select>
-          </div>
-        </>
-      }
-      right={
-        <>
-          {stats ? (
-            <span className="hidden gap-3 text-[11px] text-zinc-500 lg:flex">
-              <span>{stats.running} running</span>
-              <span>{stats.review} in review</span>
-              <span>${stats.cost.toFixed(2)} spent</span>
-            </span>
-          ) : null}
-          {provider.data?.ok ? (
-            <Button
-              size="sm"
-              icon={<Download size={14} />}
-              onClick={() => setImporting(true)}
-              title={`Import issues from ${provider.data.projectRef}`}
-            >
-              Import
-            </Button>
-          ) : null}
-          {tasks.data?.length ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Trash2 size={14} />}
-              onClick={() => setClearing(true)}
-              title="Delete every task of this project"
-            >
-              Clear
-            </Button>
-          ) : null}
-          <Button
-            size="sm"
-            variant="primary"
-            icon={<Plus size={14} />}
-            onClick={() => setCreating(true)}
-            title="New task (n)"
+          <div className="relative hidden min-w-44 max-w-xs flex-1 sm:block">{searchBox}</div>
+          {/* inline filter chips on wide screens; a toggle revealing the filter row otherwise */}
+          <div className="hidden items-center gap-1 xl:flex">{filterControls}</div>
+          <IconButton
+            label={showFilters ? 'Hide filters' : 'Filters'}
+            className={`relative xl:hidden ${showFilters ? 'bg-zinc-200/70 dark:bg-zinc-700' : ''}`}
+            onClick={() => setShowFilters((v) => !v)}
           >
-            New task
-          </Button>
+            <SlidersHorizontal size={16} />
+            {filtering ? (
+              <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-accent-500" />
+            ) : null}
+          </IconButton>
         </>
       }
+      subheader={
+        showFilters || (filtering && !query) ? (
+          <div className="flex items-center gap-2 xl:hidden">
+            <div className="relative w-56 shrink-0 sm:hidden">{searchBox}</div>
+            {filterControls}
+          </div>
+        ) : null
+      }
+      info={
+        stats ? (
+          <span className="flex gap-3">
+            <span>{stats.running} running</span>
+            <span>{stats.review} in review</span>
+            <span>${stats.cost.toFixed(2)} spent</span>
+          </span>
+        ) : null
+      }
+      actions={[
+        ...(provider.data?.ok
+          ? [
+              {
+                label: 'Import issues',
+                icon: <Download />,
+                title: `Import issues from ${provider.data.projectRef}`,
+                onClick: () => setImporting(true),
+              },
+            ]
+          : []),
+        ...(tasks.data?.length
+          ? [
+              {
+                label: 'Clear all tasks',
+                icon: <Trash2 />,
+                title: 'Delete every task of this project',
+                onClick: () => setClearing(true),
+              },
+            ]
+          : []),
+        {
+          label: 'New task',
+          icon: <Plus size={14} />,
+          title: 'New task (n)',
+          primary: true,
+          onClick: () => setCreating(true),
+        },
+      ]}
     >
       {project.isError ? <div className="p-6 text-sm text-red-600">Project not found.</div> : null}
       {project.data && tasks.data ? (

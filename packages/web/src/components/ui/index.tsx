@@ -1,6 +1,6 @@
 import type { Column, Substate } from '@agent-kanban/shared';
 import { Loader2, X } from 'lucide-react';
-import { type ButtonHTMLAttributes, type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ButtonHTMLAttributes, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { COLUMN_LABELS, COLUMN_PILL, SUBSTATE_LABELS, SUBSTATE_STYLE } from '../../lib/state';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'subtle';
@@ -354,5 +354,85 @@ export function DangerConfirm({
         </Field>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Small anchored popover closed by an outside click or Escape. `button` renders the
+ * trigger and receives the open state; `children` receives a `close` callback.
+ */
+export function Popover({
+  button,
+  children,
+  align = 'right',
+  className = '',
+}: {
+  button: (state: { open: boolean; toggle: () => void }) => ReactNode;
+  children: (close: () => void) => ReactNode;
+  align?: 'left' | 'right';
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  return (
+    <div ref={ref} className={`relative ${className}`}>
+      {button({ open, toggle: () => setOpen((o) => !o) })}
+      {open ? (
+        <div
+          className={`absolute top-full z-40 mt-1 min-w-48 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800 ${align === 'right' ? 'right-0' : 'left-0'}`}
+        >
+          {children(() => setOpen(false))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  icon?: ReactNode;
+  onClick?: () => void;
+  title?: string;
+  disabled?: boolean;
+  active?: boolean;
+}
+
+/** One row of a popover menu. */
+export function MenuRow({ item, onPick }: { item: MenuItem; onPick?: () => void }) {
+  return (
+    <button
+      type="button"
+      title={item.title}
+      disabled={item.disabled}
+      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition disabled:opacity-50 ${
+        item.active
+          ? 'bg-accent-50 text-accent-700 dark:bg-accent-950/40 dark:text-accent-200'
+          : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-700'
+      }`}
+      onClick={() => {
+        item.onClick?.();
+        onPick?.();
+      }}
+    >
+      {item.icon ? (
+        <span className="w-4 shrink-0 text-zinc-500 [&>svg]:h-4 [&>svg]:w-4">{item.icon}</span>
+      ) : null}
+      <span className="flex-1 truncate">{item.label}</span>
+    </button>
   );
 }
