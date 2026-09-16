@@ -44,7 +44,8 @@
           "a11y": {
             "useSemanticElements": "off",
             "noStaticElementInteractions": "off",
-            "noLabelWithoutControl": "off"
+            "noLabelWithoutControl": "off",
+            "noAutofocus": "off"
           }
         }
       }

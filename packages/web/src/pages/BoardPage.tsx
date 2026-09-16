@@ -224,6 +224,17 @@ export function BoardPage() {
               Import
             </Button>
           ) : null}
+          {tasks.data?.length ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Trash2 size={14} />}
+              onClick={() => setClearing(true)}
+              title="Delete every task of this project"
+            >
+              Clear
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="primary"
@@ -252,6 +263,20 @@ export function BoardPage() {
       ) : (
         <div className="p-6 text-sm text-zinc-500">Loading…</div>
       )}
+      {clearing && tasks.data ? (
+        <DangerConfirm
+          title={`Delete all ${tasks.data.length} tasks?`}
+          body="Every task of this project is removed, whatever its origin (manual or imported), together with runs, comments and active worktrees. Linked issues on the tracker are not touched; imported ones come back on the next poll unless you remove the integration."
+          running={
+            tasks.data.filter(
+              (t) => t.column === 'doing' && (t.substate === 'running' || t.substate === 'queued'),
+            ).length
+          }
+          loading={clearAll.isPending}
+          onConfirm={(force) => clearAll.mutate(force)}
+          onClose={() => setClearing(false)}
+        />
+      ) : null}
       {creating ? (
         <NewTaskModal
           projectId={projectId}
