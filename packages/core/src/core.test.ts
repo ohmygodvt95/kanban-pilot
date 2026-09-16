@@ -908,8 +908,13 @@ describe('issue tracker integration, classification and priority queue', () => {
       token: 't',
       import_filter: 'agent',
     });
-    expect(await core.issues.pollAll()).toBe(2); // #1 → backlog, #2 → todo, #3 skipped (done), #4 no label
+    // concurrent polls (start-up + ticker + "Fetch now") must not duplicate imports
+    const [a, b] = await Promise.all([core.issues.pollAll(), core.issues.pollAll()]);
+    expect(a + b).toBe(2); // #1 → backlog, #2 → todo, #3 skipped (done), #4 no label
     expect(await core.issues.pollAll()).toBe(0); // idempotent
+    expect((await core.store.listTasks(project.id)).length).toBe(2);
+    // the imported "Ready" issue was not written back to the tracker
+    expect(tracker.statuses).toEqual([]);
     const tasks = await core.store.listTasks(project.id);
     const crash = tasks.find((t) => t.source_external_id === '1')!;
     const ready = tasks.find((t) => t.source_external_id === '2')!;

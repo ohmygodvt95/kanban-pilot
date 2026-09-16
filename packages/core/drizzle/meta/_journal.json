@@ -50,6 +50,13 @@
       "when": 1789545063400,
       "tag": "0006_heavy_lethal_legion",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789548700176,
+      "tag": "0007_sad_puma",
+      "breakpoints": true
     }
   ]
 }

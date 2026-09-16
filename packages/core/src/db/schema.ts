@@ -15,6 +15,7 @@ import type {
   TaskKind,
   TaskPriority,
 } from '@agent-kanban/shared';
+import { sql } from 'drizzle-orm';
 import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 const bool = (name: string) => integer(name, { mode: 'boolean' });
@@ -73,7 +74,13 @@ export const tasks = sqliteTable(
     created_at: text('created_at').notNull(),
     updated_at: text('updated_at').notNull(),
   },
-  (t) => [index('tasks_project_column_idx').on(t.project_id, t.column)],
+  (t) => [
+    index('tasks_project_column_idx').on(t.project_id, t.column),
+    // one task per imported issue and project
+    uniqueIndex('tasks_project_source_unique')
+      .on(t.project_id, t.source_provider, t.source_external_id)
+      .where(sql`source_external_id IS NOT NULL`),
+  ],
 );
 
 export const attempts = sqliteTable(

@@ -23,6 +23,8 @@ export interface TransitionPayload {
   error_message?: string;
   /** system: the project auto-starts tasks that reach TODO */
   auto_start?: boolean;
+  /** system: do not mirror this move to the linked issue (the move came from the tracker itself) */
+  skip_issue_sync?: boolean;
   /** system: refinement outputs */
   plan?: string;
   refinement_session_id?: string;

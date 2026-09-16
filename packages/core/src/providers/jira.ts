@@ -124,10 +124,16 @@ class JiraProvider implements IssueProvider {
     };
   }
 
-  /** `import_filter` is a JQL fragment; the project key is always enforced. */
+  /**
+   * `import_filter` is a JQL fragment; the project key and `resolution = Unresolved`
+   * are always enforced, and issues are limited to the current user unless the
+   * filter mentions `assignee` itself.
+   */
   async listIssues(filter: { query?: string } = {}): Promise<ExternalIssue[]> {
     const parts = [`project = "${this.cfg.projectRef}"`, 'resolution = Unresolved'];
-    if (this.cfg.importFilter?.trim()) parts.push(`(${this.cfg.importFilter.trim()})`);
+    const extra = this.cfg.importFilter?.trim();
+    if (!/assignee/i.test(extra ?? '')) parts.push('assignee = currentUser()');
+    if (extra) parts.push(`(${extra})`);
     if (filter.query?.trim()) parts.push(`text ~ "${filter.query.trim().replace(/"/g, '\\"')}"`);
     const jql = `${parts.join(' AND ')} ORDER BY updated DESC`;
     const res = await this.request<{ issues: JiraIssue[] }>('/search', {
@@ -157,9 +163,14 @@ class JiraProvider implements IssueProvider {
     return [...new Set(types.flatMap((t) => t.statuses.map((s) => s.name)))];
   }
 
-  /** Find the transition leading to `status` and execute it. */
+  /** Find the transition leading to `status` and execute it; a no-op when the issue is already there. */
   async setStatus(externalId: string, status: string, _ctx: SyncContext): Promise<void> {
     const key = encodeURIComponent(externalId);
+    const wantedStatus = status.trim().toLowerCase();
+    const current = await this.request<{ fields: { status?: { name: string } } }>(
+      `/issue/${key}?fields=status`,
+    );
+    if (current.fields.status?.name.toLowerCase() === wantedStatus) return;
     const { transitions } = await this.request<{
       transitions: { id: string; name: string; to: { name: string } }[];
     }>(`/issue/${key}/transitions`);
@@ -183,6 +194,42 @@ class JiraProvider implements IssueProvider {
       body: JSON.stringify({ body }),
     });
   }
+}
+
+/**
+ * Best-effort conversion of Jira wiki markup (Jira Server descriptions) to markdown:
+ * headings, bold/italic, lists, {code}/{noformat} blocks, links and line endings.
+ */
+export function jiraWikiToMarkdown(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(
+      /\{code(?::[^}]*)?\}([\s\S]*?)\{code\}/g,
+      (_m, body: string) => `\n\`\`\`\n${body.trim()}\n\`\`\`\n`,
+    )
+    .replace(
+      /\{noformat\}([\s\S]*?)\{noformat\}/g,
+      (_m, body: string) => `\n\`\`\`\n${body.trim()}\n\`\`\`\n`,
+    )
+    .replace(/\{quote\}([\s\S]*?)\{quote\}/g, (_m, body: string) =>
+      body
+        .trim()
+        .split('\n')
+        .map((l) => `> ${l}`)
+        .join('\n'),
+    )
+    .replace(
+      /^h([1-6])\.\s*(.*)$/gm,
+      (_m, level: string, title: string) => `${'#'.repeat(Number(level))} ${title}`,
+    )
+    .replace(/^[ \t]*[*-][ \t]+/gm, '- ')
+    .replace(/^[ \t]*#[ \t]+/gm, '1. ')
+    .replace(/\[([^\]|]+)\|([^\]]+)\]/g, '[$1]($2)')
+    .replace(/\{\{([^}]+)\}\}/g, '`$1`')
+    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$|[.,;:])/g, '$1**$2**')
+    .replace(/(^|\s)_([^_\n]+)_(?=\s|$|[.,;:])/g, '$1*$2*')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 interface JiraIssue {
@@ -241,7 +288,7 @@ export const jiraModule: ProviderModule = {
         label: 'Import JQL',
         type: 'textarea',
         placeholder: 'labels = agent AND assignee = currentUser()',
-        help: 'Appended to project = KEY AND resolution = Unresolved. Empty = every unresolved issue.',
+        help: 'Appended to project = KEY AND resolution = Unresolved AND assignee = currentUser(). Mention assignee yourself to override that part.',
       },
     ],
   },

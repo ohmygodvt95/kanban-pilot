@@ -174,12 +174,14 @@ export class ProjectService {
     const created: Task[] = [];
     for (const id of externalIds) {
       if (existing.has(id)) continue;
+      existing.add(id); // guard against the same id twice in one call
       const issue = await link.provider.getIssue(id);
       const column = IssueService.importColumn(link.row.status_map, issue.status);
       if (column === 'skip') continue;
+      // Title = summary, body = description; the issue link lives in source_url.
       const task = await this.tasks().create(projectId, {
         title: issue.title,
-        description: `${issue.body}\n\n_Imported from ${issue.url}_`,
+        description: issue.body,
         kind: issue.kind ?? null,
         priority: issue.priority ?? null,
         source_provider: link.row.provider,

@@ -89,6 +89,10 @@ class GitLabProvider implements IssueProvider {
 
   async setStatus(externalId: string, status: string, ctx: SyncContext): Promise<void> {
     const issue = await this.request<GitLabIssue>(`/projects/${this.project}/issues/${externalId}`);
+    const alreadyThere =
+      (issue.labels ?? []).some((l) => l.toLowerCase() === status.toLowerCase()) &&
+      (issue.state === 'closed') === (ctx.column === 'done');
+    if (alreadyThere) return;
     const workflow = this.cfg.statusNames.map((s) => s.toLowerCase());
     const labels = [...(issue.labels ?? []).filter((l) => !workflow.includes(l.toLowerCase())), status];
     await this.request(`/projects/${this.project}/issues/${externalId}`, {

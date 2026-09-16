@@ -69,7 +69,8 @@ the main working tree of your repo is never touched by an agent.
   project, configured on the *Integration* screen (plug icon). Each tracker is a `ProviderModule` that declares its
   own form fields, so adding one is a single file. Credentials are stored locally in the SQLite database (GitHub/GitLab
   tokens may also come from `GITHUB_TOKEN`/`GH_TOKEN`/`GITLAB_TOKEN`). New issues matching the import filter (labels,
-  or JQL for Jira) are pulled every 30 s (configurable), and a **status map** decides both where imported issues land
+  or JQL for Jira — Jira imports are limited to `assignee = currentUser()` unless your JQL says otherwise; Jira wiki
+  markup is converted to markdown) are pulled every 30 s (configurable), and a **status map** decides both where imported issues land
   (which column each remote status means) and what is written back when a task moves (Jira transition or label swap,
   plus an optional comment; Done closes GitHub/GitLab issues).
 - **Type & priority.** Tasks carry a kind (task/bug/feature/chore) and a priority (low…urgent). Leave them on

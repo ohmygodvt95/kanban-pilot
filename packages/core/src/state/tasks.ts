@@ -330,7 +330,7 @@ export class TaskService {
   /** Imported issues already marked "ready" on the tracker skip refinement and land in TODO. */
   async importToTodo(taskId: string): Promise<Task> {
     await this.store.updateTask(taskId, { skip_refinement: true });
-    return this.transition(taskId, 'todo', 'system');
+    return this.transition(taskId, 'todo', 'system', { skip_issue_sync: true });
   }
 
   /** Start every TODO task of a project (used when auto_start is switched on). */
@@ -376,7 +376,8 @@ export class TaskService {
     const positionPatch = payload.position !== undefined ? { position: payload.position } : {};
     const result = await this.apply(task, project, activeAttempt, decision, payload, positionPatch);
     // Mirror the column change on the linked issue (fire-and-forget; never blocks the transition).
-    if (result.column !== task.column) void this.deps.issues().syncTask(task, result);
+    if (result.column !== task.column && !payload.skip_issue_sync)
+      void this.deps.issues().syncTask(task, result);
     // A task that just became TODO(ready) may be started right away by the project.
     return result.column === 'todo' && task.column !== 'todo' ? this.maybeAutoStart(result) : result;
   }

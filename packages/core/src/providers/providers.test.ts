@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { githubModule } from './github.js';
 import { gitlabModule } from './gitlab.js';
 import { buildProvider, createDefaultProviders, detectFromRemote, listProviderModules } from './index.js';
-import { jiraModule } from './jira.js';
+import { jiraModule, jiraWikiToMarkdown } from './jira.js';
 import { classifyLabels, columnForStatus, statusComment, statusForColumn } from './types.js';
 
 const cfg = (over: Record<string, unknown> = {}) => ({
@@ -102,6 +102,7 @@ describe('provider modules', () => {
         });
       }
       if (u.includes('/transitions') && init?.method === 'POST') return new Response(null, { status: 204 });
+      if (/\/issue\/PROJ-7\?fields=status$/.test(u)) return json({ fields: { status: { name: 'To Do' } } });
       if (u.includes('/transitions'))
         return json({ transitions: [{ id: '31', name: 'Start Progress', to: { name: 'In Progress' } }] });
       if (u.includes('/statuses'))
@@ -140,7 +141,7 @@ describe('provider modules', () => {
         `Basic ${Buffer.from('me:s3cret').toString('base64')}`,
       );
       expect(JSON.parse(String(search.init.body)).jql).toBe(
-        'project = "PROJ" AND resolution = Unresolved AND (labels = agent) ORDER BY updated DESC',
+        'project = "PROJ" AND resolution = Unresolved AND assignee = currentUser() AND (labels = agent) ORDER BY updated DESC',
       );
       expect(await jira.listStatuses()).toEqual(['To Do', 'In Progress', 'Done']);
       await jira.setStatus('PROJ-7', 'in progress', { column: 'doing' });
@@ -149,6 +150,10 @@ describe('provider modules', () => {
       await expect(jira.setStatus('PROJ-7', 'Nowhere', { column: 'review' })).rejects.toThrow(
         /no transition to "Nowhere"/,
       );
+      // already in the wanted status → no transition call
+      const before = calls.length;
+      await jira.setStatus('PROJ-7', 'to do', { column: 'todo' });
+      expect(calls.slice(before).some((c) => c.init.method === 'POST')).toBe(false);
     } finally {
       globalThis.fetch = original;
     }
@@ -191,6 +196,40 @@ describe('provider modules', () => {
       );
       await pat.check();
       expect(seen.at(-1)?.Authorization).toBe('Bearer pat-123');
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('converts Jira wiki markup to markdown and respects an explicit assignee clause', async () => {
+    expect(
+      jiraWikiToMarkdown(
+        'h2. Goal\r\n\r\n* one\r\n* two\r\n# first\r\n{code:js}\nconst a = 1;\n{code}\nSee [docs|https://x.y] and {{inline}} *bold* _it_',
+      ),
+    ).toBe(
+      '## Goal\n\n- one\n- two\n1. first\n\n```\nconst a = 1;\n```\n\nSee [docs](https://x.y) and `inline` **bold** *it*',
+    );
+    const original = globalThis.fetch;
+    let jql = '';
+    globalThis.fetch = (async (_u: string | URL | Request, init?: RequestInit) => {
+      jql = JSON.parse(String(init?.body)).jql;
+      return new Response(JSON.stringify({ issues: [] }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await jiraModule
+        .create(
+          cfg({
+            baseUrl: 'https://j',
+            projectRef: 'P',
+            username: 'me',
+            password: 'x',
+            token: null,
+            importFilter: 'assignee = jdoe',
+          }),
+        )
+        .listIssues();
+      expect(jql).not.toContain('currentUser()');
+      expect(jql).toContain('(assignee = jdoe)');
     } finally {
       globalThis.fetch = original;
     }

@@ -107,6 +107,10 @@ class GitHubProvider implements IssueProvider {
   async setStatus(externalId: string, status: string, ctx: SyncContext): Promise<void> {
     const issue = await this.request<GitHubIssue>(`/repos/${this.cfg.projectRef}/issues/${externalId}`);
     const current = (issue.labels ?? []).map((l) => (typeof l === 'string' ? l : l.name));
+    const alreadyThere =
+      current.some((l) => l.toLowerCase() === status.toLowerCase()) &&
+      (issue.state === 'closed') === (ctx.column === 'done');
+    if (alreadyThere) return;
     const workflow = this.cfg.statusNames.map((s) => s.toLowerCase());
     const labels = [...current.filter((l) => !workflow.includes(l.toLowerCase())), status];
     await this.request(`/repos/${this.cfg.projectRef}/issues/${externalId}`, {

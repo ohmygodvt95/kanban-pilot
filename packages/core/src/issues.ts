@@ -63,10 +63,15 @@ export class IssueService {
     return mapped ?? 'backlog';
   }
 
+  /** Projects currently being polled; a second poll of the same project waits for none and returns 0. */
+  private readonly polling = new Set<string>();
+
   /** Import issues matching the integration's filter that are not tasks yet. */
   async pollProject(projectId: string): Promise<number> {
     const link = await this.deps.integrations().provider(projectId);
     if (!link) return 0;
+    if (this.polling.has(projectId)) return 0; // start-up poll, ticker and "Fetch now" must not overlap
+    this.polling.add(projectId);
     try {
       const existing = new Set(
         (await this.ctx.store.listTasks(projectId)).map((t) => t.source_external_id).filter(Boolean),
@@ -96,6 +101,8 @@ export class IssueService {
       });
       this.ctx.logger.warn({ project: projectId, err: errorMessage(err) }, 'issue import failed');
       return 0;
+    } finally {
+      this.polling.delete(projectId);
     }
   }
 
