@@ -9,6 +9,11 @@
       "@agent-kanban/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "@agent-kanban/source": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     }
   },
   "files": [
@@ -16,7 +21,7 @@
     "templates"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp src/testing/fake-agent.mjs dist/testing/",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate && node --experimental-strip-types scripts/bundle-migrations.ts",
@@ -32,6 +37,6 @@
   "devDependencies": {
     "@types/node": "22.20.3",
     "drizzle-kit": "0.31.10",
-    "tsx": "^4.23.13"
+    "tsx": "4.23.13"
   }
 }
