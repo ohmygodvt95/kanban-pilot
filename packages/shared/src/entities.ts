@@ -53,6 +53,10 @@ export const taskSchema = z.object({
   source_url: nullableString,
   created_at: isoDate,
   updated_at: isoDate,
+  /** Computed: sum of cost_usd over all runs of the task. */
+  total_cost_usd: z.number(),
+  /** Computed: feedback comments not yet sent to the agent. */
+  unconsumed_feedback: z.number().int(),
 });
 export type Task = z.infer<typeof taskSchema>;
 

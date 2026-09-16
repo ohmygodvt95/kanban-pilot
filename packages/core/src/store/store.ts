@@ -34,7 +34,14 @@ type RunRow = typeof runs.$inferSelect;
 type JobRow = typeof jobs.$inferSelect;
 
 const toProject = (r: ProjectRow): Project => r;
-const toTask = (r: TaskRow): Task => r;
+interface TaskAggregates {
+  total_cost_usd: number;
+  unconsumed_feedback: number;
+}
+const toTask = (r: TaskRow, agg: TaskAggregates = { total_cost_usd: 0, unconsumed_feedback: 0 }): Task => ({
+  ...r,
+  ...agg,
+});
 const toAttempt = (r: AttemptRow): Attempt => r;
 const toRun = (r: RunRow): Run => ({ ...r, structured_output: r.structured_output ?? null });
 const toJob = (r: JobRow): Job => r;
@@ -92,19 +99,46 @@ export class Store {
   }
 
   // ---- tasks ----------------------------------------------------------------
+  private async taskAggregates(taskIds: string[]): Promise<Map<string, TaskAggregates>> {
+    const map = new Map<string, TaskAggregates>();
+    if (taskIds.length === 0) return map;
+    const costs = await this.db
+      .select({ task_id: runs.task_id, total: sql<number | null>`sum(${runs.cost_usd})` })
+      .from(runs)
+      .where(inArray(runs.task_id, taskIds))
+      .groupBy(runs.task_id);
+    const feedback = await this.db
+      .select({ task_id: comments.task_id, n: count() })
+      .from(comments)
+      .where(
+        and(
+          inArray(comments.task_id, taskIds),
+          eq(comments.kind, 'feedback'),
+          isNull(comments.consumed_by_run_id),
+        ),
+      )
+      .groupBy(comments.task_id);
+    for (const id of taskIds) map.set(id, { total_cost_usd: 0, unconsumed_feedback: 0 });
+    for (const c of costs) map.get(c.task_id)!.total_cost_usd = Number(c.total ?? 0);
+    for (const f of feedback) map.get(f.task_id)!.unconsumed_feedback = f.n;
+    return map;
+  }
+
   async listTasks(projectId: string): Promise<Task[]> {
-    return (
-      await this.db
-        .select()
-        .from(tasks)
-        .where(eq(tasks.project_id, projectId))
-        .orderBy(asc(tasks.position), asc(tasks.created_at))
-    ).map(toTask);
+    const rows = await this.db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.project_id, projectId))
+      .orderBy(asc(tasks.position), asc(tasks.created_at));
+    const agg = await this.taskAggregates(rows.map((r) => r.id));
+    return rows.map((r) => toTask(r, agg.get(r.id)));
   }
 
   async findTask(id: string): Promise<Task | null> {
     const r = await this.db.query.tasks.findFirst({ where: eq(tasks.id, id) });
-    return r ? toTask(r) : null;
+    if (!r) return null;
+    const agg = await this.taskAggregates([id]);
+    return toTask(r, agg.get(id));
   }
 
   async getTask(id: string): Promise<Task> {

@@ -1,4 +1,7 @@
 import type { Attempt, Column, Comment, Project, Task, TaskDetail } from '@agent-kanban/shared';
+
+type TaskPatch = Omit<Task, 'total_cost_usd' | 'unconsumed_feedback'>;
+
 import type { AttemptService } from '../attempts/attempts.js';
 import type { CoreContext } from '../context.js';
 import { getExecutor } from '../executors/registry.js';
@@ -77,7 +80,7 @@ export class TaskService {
     if (task.column === 'done' && (input.title !== undefined || input.description !== undefined)) {
       throw new CoreError('CONFLICT', 'DONE tasks are immutable');
     }
-    const patch: Partial<Task> = {};
+    const patch: Partial<TaskPatch> = {};
     if (input.title !== undefined) patch.title = input.title;
     if (input.description !== undefined) patch.description = input.description;
     if (input.executor !== undefined) patch.executor = input.executor;
@@ -206,7 +209,7 @@ export class TaskService {
     positionPatch: { position?: number },
     target: Column,
   ): Promise<Task> {
-    const extra: Partial<Task> = { ...positionPatch };
+    const extra: Partial<TaskPatch> = { ...positionPatch };
     if (payload.plan !== undefined) extra.plan = payload.plan;
     if (payload.refinement_session_id !== undefined)
       extra.refinement_session_id = payload.refinement_session_id;
@@ -324,7 +327,7 @@ export class TaskService {
   private async startAttempt(
     task: Task,
     project: Project,
-    extra: Partial<Task>,
+    extra: Partial<TaskPatch>,
     opts: { previousFeedback?: Comment[] } = {},
   ): Promise<Task> {
     const adapter = await this.executorFor(task, project);
