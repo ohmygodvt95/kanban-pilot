@@ -1,7 +1,7 @@
 import type { Column, ExecutorId, ExternalIssue, Task, TaskKind, TaskPriority } from '@agent-kanban/shared';
 import { EXECUTOR_IDS, TASK_KINDS, TASK_PRIORITIES } from '@agent-kanban/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, Search, X } from 'lucide-react';
+import { Download, Plus, Search, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
@@ -10,7 +10,7 @@ import { useProjectEvents } from '../api/sse';
 import { Board } from '../components/board/Board';
 import { TaskDrawer } from '../components/drawer/TaskDrawer';
 import { Shell } from '../components/Shell';
-import { Button, Field, inputClass, Modal, Switch } from '../components/ui';
+import { Button, DangerConfirm, Field, inputClass, Modal, Switch } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { EXECUTOR_LABELS } from '../lib/state';
 import { KIND_LABELS, PRIORITY_LABELS } from '../lib/taskmeta';
@@ -65,6 +65,22 @@ export function BoardPage() {
   const sse = useProjectEvents(projectId);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const qc = useQueryClient();
+  const toast = useToast();
+  const clearAll = useMutation({
+    mutationFn: (force: boolean) => api.projects.deleteAllTasks(projectId, force),
+    onSuccess: (r) => {
+      setClearing(false);
+      open(null);
+      void qc.invalidateQueries({ queryKey: keys.tasks(projectId) });
+      toast.push({
+        kind: r.skipped ? 'info' : 'success',
+        text: `Deleted ${r.deleted} task${r.deleted === 1 ? '' : 's'}${r.skipped ? `, ${r.skipped} skipped (agent running)` : ''}`,
+      });
+    },
+    onError: (err) => toast.error(err, 'Delete failed'),
+  });
   const [query, setQuery] = useState('');
   const [executor, setExecutor] = useState<ExecutorId | ''>('');
   const [quick, setQuick] = useState<Quick>('all');

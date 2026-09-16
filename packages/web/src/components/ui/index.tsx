@@ -299,3 +299,60 @@ export function KeyValue({ items }: { items: { k: string; v: ReactNode }[] }) {
     </dl>
   );
 }
+
+/**
+ * Confirmation for destructive bulk actions: shows the count, an optional
+ * "also cancel running agents" switch, and requires typing DELETE.
+ */
+export function DangerConfirm({
+  title,
+  body,
+  running,
+  onConfirm,
+  onClose,
+  loading,
+}: {
+  title: string;
+  body: ReactNode;
+  /** Number of tasks with a running/queued agent; shows the force switch when > 0. */
+  running: number;
+  onConfirm: (force: boolean) => void;
+  onClose: () => void;
+  loading?: boolean;
+}) {
+  const [typed, setTyped] = useState('');
+  const [force, setForce] = useState(false);
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger"
+            disabled={typed !== 'DELETE'}
+            loading={loading}
+            onClick={() => onConfirm(force)}
+          >
+            Delete
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-3">
+        <div>{body}</div>
+        {running > 0 ? (
+          <Switch
+            checked={force}
+            onChange={setForce}
+            label={`Also cancel ${running} running/queued agent run${running === 1 ? '' : 's'} and delete those tasks`}
+          />
+        ) : null}
+        <Field label="Type DELETE to confirm">
+          <input className={inputClass} value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
+        </Field>
+      </div>
+    </Modal>
+  );
+}

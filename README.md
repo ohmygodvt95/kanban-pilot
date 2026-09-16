@@ -64,6 +64,9 @@ the main working tree of your repo is never touched by an agent.
   parallelism and the rest wait in Doing as *queued*. Turning it on also starts tasks already waiting in To do.
 - **Retention.** Event streams of DONE runs older than 30 days are pruned (`--retention-days`, 0 = never); run
   metadata (cost, summary) stays. Merged attempts remain diffable via `base..branch`.
+- **Clear a board.** "Clear" on the board (or *Delete all tasks* in Settings → Danger zone) removes every task of a
+  project whatever its origin, after typing DELETE; running agents are skipped unless you tick the force switch.
+  `DELETE /api/projects/:id/tasks?force=1` does the same from scripts.
 - **Notifications.** The bell in the header enables browser notifications for Review / error / planner questions.
 - **Issue trackers — GitHub, GitLab (self-hosted too), Jira Server/DC 8 (basic auth).** One connection per
   project, configured on the *Integration* screen (plug icon). Each tracker is a `ProviderModule` that declares its

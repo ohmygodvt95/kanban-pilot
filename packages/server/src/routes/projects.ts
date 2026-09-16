@@ -80,6 +80,12 @@ export function projectRoutes(core: Core) {
     return c.json(await core.store.listTasks(c.req.param('id')));
   });
 
+  /** Bulk delete every task of the project; `?force=1` also cancels running agents. */
+  app.delete('/:id/tasks', async (c) => {
+    const force = ['1', 'true'].includes(c.req.query('force') ?? '');
+    return c.json(await core.tasks.deleteAll(c.req.param('id'), { force }));
+  });
+
   app.post('/:id/tasks', zValidator('json', createTaskSchema), async (c) => {
     const task = await core.tasks.create(c.req.param('id'), c.req.valid('json'));
     return c.json(task, 201);

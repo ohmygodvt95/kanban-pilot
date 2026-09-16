@@ -325,6 +325,17 @@ describe('HTTP API', () => {
     expect(await json<unknown>(await app.request(`/api/projects/${project.id}/integration`))).toBeNull();
   });
 
+  it('bulk-deletes the tasks of a project', async () => {
+    await post(`/api/projects/${project.id}/tasks`, { title: 'a', description: 'x' });
+    await post(`/api/projects/${project.id}/tasks`, { title: 'b', description: 'x' });
+    const before = await json<Task[]>(await app.request(`/api/projects/${project.id}/tasks`));
+    expect(before.length).toBeGreaterThanOrEqual(2);
+    const res = await app.request(`/api/projects/${project.id}/tasks?force=1`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect((await json<{ deleted: number; skipped: number }>(res)).skipped).toBe(0);
+    expect(await json<Task[]>(await app.request(`/api/projects/${project.id}/tasks`))).toEqual([]);
+  });
+
   it('serves the SPA with fallback and keeps /api JSON 404s', async () => {
     expect((await app.request('/api/nothing')).status).toBe(404);
     expect((await json<{ error: { code: string } }>(await app.request('/api/nothing'))).error.code).toBe(

@@ -329,6 +329,23 @@ describe('core end-to-end with fake executor', () => {
     expect((await core.store.getTask(a.id)).column).toBe('review');
   });
 
+  it('deletes every task of a project at once, skipping or force-cancelling running ones', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const idle = await core.tasks.create(project.id, { title: 'idle', description: 'x' });
+    const busy = await core.tasks.create(project.id, { title: 'busy', description: 'FAKE:sleep=60000' });
+    await core.tasks.transition(busy.id, 'todo', 'user');
+    const runningP = waitState(busy.id, 'doing', 'running');
+    await core.tasks.transition(busy.id, 'doing', 'user');
+    await runningP;
+    expect(await core.tasks.deleteAll(project.id)).toEqual({ deleted: 1, skipped: 1 });
+    expect(await core.store.findTask(idle.id)).toBeNull();
+    expect((await core.store.getTask(busy.id)).substate).toBe('running');
+    const wt = (await core.tasks.detail(busy.id)).current_attempt!.worktree_path;
+    expect(await core.tasks.deleteAll(project.id, { force: true })).toEqual({ deleted: 1, skipped: 0 });
+    expect(await core.store.listTasks(project.id)).toEqual([]);
+    expect(existsSync(wt)).toBe(false);
+  });
+
   it('project creation validates the repo path and reads .agent-kanban.json', async () => {
     await expect(core.projects.create({ repo_path: root })).rejects.toMatchObject({ code: 'VALIDATION' });
     await writeFile(

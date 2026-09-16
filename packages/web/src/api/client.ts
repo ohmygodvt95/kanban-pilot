@@ -97,6 +97,11 @@ export const api = {
     fetchIssues: (id: string) =>
       request<{ imported: number }>(`/projects/${id}/integration/fetch`, { method: 'POST' }),
     tasks: (id: string) => request<Task[]>(`/projects/${id}/tasks`),
+    /** Delete every task of the project; `force` also cancels running agents. */
+    deleteAllTasks: (id: string, force: boolean) =>
+      request<{ deleted: number; skipped: number }>(`/projects/${id}/tasks${force ? '?force=1' : ''}`, {
+        method: 'DELETE',
+      }),
     createTask: (id: string, input: CreateTaskInput) => request<Task>(`/projects/${id}/tasks`, json(input)),
   },
   tasks: {

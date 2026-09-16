@@ -182,6 +182,41 @@ export class TaskService {
     await this.store.deleteTask(id);
   }
 
+  /**
+   * Delete every task of a project regardless of its origin (manual, imported…).
+   * Tasks with a queued/running agent are skipped unless `force`, in which case
+   * their runs are cancelled first. Active worktrees are discarded; linked issues
+   * on the tracker are left untouched.
+   */
+  async deleteAll(
+    projectId: string,
+    opts: { force?: boolean } = {},
+  ): Promise<{ deleted: number; skipped: number }> {
+    await this.store.getProject(projectId);
+    let deleted = 0;
+    let skipped = 0;
+    for (const task of await this.store.listTasks(projectId)) {
+      if (await this.hasActiveRun(task.id)) {
+        if (!opts.force) {
+          skipped++;
+          continue;
+        }
+        for (const run of await this.store.activeRuns(task.id)) await this.cancelRun(run.id).catch(() => {});
+        // give the runner a moment to finalise the killed process before removing its worktree
+        for (let i = 0; i < 40 && (await this.hasActiveRun(task.id)); i++)
+          await new Promise((r) => setTimeout(r, 250));
+      }
+      try {
+        await this.delete(task.id);
+        deleted++;
+      } catch (err) {
+        this.ctx.logger.warn({ task: task.id, err: errorMessage(err) }, 'bulk delete: task skipped');
+        skipped++;
+      }
+    }
+    return { deleted, skipped };
+  }
+
   async clone(id: string): Promise<Task> {
     const task = await this.store.getTask(id);
     const position = await this.store.nextPosition(task.project_id, 'backlog');

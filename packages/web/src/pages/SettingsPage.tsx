@@ -11,9 +11,9 @@ import { ArrowLeft, Plug, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { keys, useProject, useProvider } from '../api/queries';
+import { keys, useProject, useProvider, useTasks } from '../api/queries';
 import { Shell } from '../components/Shell';
-import { Button, Card, Field, inputClass, Switch, useConfirm } from '../components/ui';
+import { Button, Card, DangerConfirm, Field, inputClass, Switch, useConfirm } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { EXECUTOR_LABELS } from '../lib/state';
 import { ExecutorStatusRow } from './ProjectsPage';
@@ -83,6 +83,20 @@ function SettingsForm({ project }: { project: Project }) {
   const navigate = useNavigate();
   const [confirm, confirmNode] = useConfirm();
   const provider = useProvider(project.id);
+  const tasks = useTasks(project.id);
+  const [clearing, setClearing] = useState(false);
+  const clearAll = useMutation({
+    mutationFn: (force: boolean) => api.projects.deleteAllTasks(project.id, force),
+    onSuccess: (r) => {
+      setClearing(false);
+      void qc.invalidateQueries({ queryKey: keys.tasks(project.id) });
+      toast.push({
+        kind: r.skipped ? 'info' : 'success',
+        text: `Deleted ${r.deleted} task${r.deleted === 1 ? '' : 's'}${r.skipped ? `, ${r.skipped} skipped (agent running)` : ''}`,
+      });
+    },
+    onError: (err) => toast.error(err, 'Delete failed'),
+  });
   const [form, setForm] = useState<Form>(() => toForm(project));
   useEffect(() => setForm(toForm(project)), [project]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -119,6 +133,20 @@ function SettingsForm({ project }: { project: Project }) {
   return (
     <div className="mx-auto max-w-3xl p-6">
       {confirmNode}
+      {clearing ? (
+        <DangerConfirm
+          title={`Delete all ${tasks.data?.length ?? ''} tasks?`}
+          body="Every task of this project is removed, whatever its origin, with runs, comments and active worktrees. Linked issues on the tracker are not touched."
+          running={
+            (tasks.data ?? []).filter(
+              (t) => t.column === 'doing' && (t.substate === 'running' || t.substate === 'queued'),
+            ).length
+          }
+          loading={clearAll.isPending}
+          onConfirm={(force) => clearAll.mutate(force)}
+          onClose={() => setClearing(false)}
+        />
+      ) : null}
       <div className="mb-5 flex items-end justify-between gap-4">
         <div className="min-w-0">
           <Link
