@@ -43,4 +43,5 @@ if (!existsSync(join(webDist, 'index.html'))) {
 cpSync(webDist, join(dist, 'web'), { recursive: true });
 rmSync(join(root, 'templates'), { recursive: true, force: true });
 cpSync(join(root, '..', 'core', 'templates'), join(root, 'templates'), { recursive: true });
+cpSync(join(root, '..', '..', 'README.md'), join(root, 'README.md'));
 console.log('cli built: dist/bin.js + dist/web + templates/');
