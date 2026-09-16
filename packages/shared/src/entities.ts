@@ -43,6 +43,8 @@ export const projectSchema = z.object({
   done_action: doneActionSchema,
   /** Start every task automatically when it reaches TODO (bounded by max_concurrent_runs). */
   auto_start: z.boolean(),
+  /** Let the agent drive a browser (Claude in Chrome: `claude --chrome`). */
+  browser_enabled: z.boolean(),
   created_at: isoDate,
   updated_at: isoDate,
 });
@@ -59,6 +61,8 @@ export const taskSchema = z.object({
   executor: executorIdSchema.nullable(),
   /** Per-task model override; null = project default. */
   model: nullableString,
+  /** Per-task browser override; null = project default. */
+  browser: z.boolean().nullable(),
   skip_refinement: z.boolean(),
   plan: nullableString,
   refinement_session_id: nullableString,

@@ -36,6 +36,7 @@ export const projects = sqliteTable('projects', {
   followup_prompt: text('followup_prompt'),
   done_action: text('done_action').$type<DoneAction>().notNull().default('merge'),
   auto_start: bool('auto_start').notNull().default(false),
+  browser_enabled: bool('browser_enabled').notNull().default(false),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 });
@@ -54,6 +55,7 @@ export const tasks = sqliteTable(
     position: real('position').notNull().default(0),
     executor: text('executor').$type<ExecutorId>(),
     model: text('model'),
+    browser: bool('browser'),
     skip_refinement: bool('skip_refinement').notNull().default(false),
     plan: text('plan'),
     refinement_session_id: text('refinement_session_id'),

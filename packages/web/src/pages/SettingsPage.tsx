@@ -72,6 +72,7 @@ const toForm = (p: Project): Form => ({
   followup_prompt: p.followup_prompt ?? '',
   done_action: p.done_action,
   auto_start: p.auto_start,
+  browser_enabled: p.browser_enabled,
 });
 
 const orNull = (v: string) => (v.trim() ? v : null);
@@ -262,6 +263,11 @@ function SettingsForm({ project }: { project: Project }) {
               checked={form.auto_start}
               onChange={(v) => set('auto_start', v)}
               label={`Auto-start: run every task as soon as it reaches To do (at most ${form.max_concurrent_runs} agent${form.max_concurrent_runs === 1 ? '' : 's'} in parallel; the rest wait in Doing as "queued")`}
+            />
+            <Switch
+              checked={form.browser_enabled}
+              onChange={(v) => set('browser_enabled', v)}
+              label="Browser access: let the agent drive Chrome (Claude in Chrome, `claude --chrome`) to verify UI flows and take screenshots. Requires the Claude in Chrome extension on this machine."
             />
             <Switch
               checked={form.auto_done}

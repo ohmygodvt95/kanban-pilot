@@ -342,6 +342,7 @@ export class JobRunner {
       outputSchema: adapter.supportsStructuredOutput ? schema : undefined,
       model: task.model ?? project.model ?? undefined,
       maxBudgetUsd: project.max_budget_usd ?? undefined,
+      browser: task.browser ?? project.browser_enabled,
     };
     if (input.outputSchema) {
       // Some CLIs (Codex) only take a schema file; write it next to the run's logs.

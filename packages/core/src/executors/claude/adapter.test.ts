@@ -39,6 +39,25 @@ describe('ClaudeAdapter', () => {
     expect(cmd.env?.CLAUDE_CODE_ENTRYPOINT).toBe('agent-kanban');
   });
 
+  it('passes model, budget and browser flags', () => {
+    const on = adapter.buildCommand({
+      cwd: '/x',
+      prompt: 'p',
+      mode: 'execute',
+      model: 'sonnet',
+      maxBudgetUsd: 2.5,
+      browser: true,
+    });
+    expect(on.args).toEqual(
+      expect.arrayContaining(['--model', 'sonnet', '--max-budget-usd', '2.5', '--chrome']),
+    );
+    const off = adapter.buildCommand({ cwd: '/x', prompt: 'p', mode: 'execute', browser: false });
+    expect(off.args).toContain('--no-chrome');
+    const dflt = adapter.buildCommand({ cwd: '/x', prompt: 'p', mode: 'execute' });
+    expect(dflt.args).not.toContain('--chrome');
+    expect(dflt.args).not.toContain('--no-chrome');
+  });
+
   it('builds a read-only refine command with json schema', () => {
     const cmd = adapter.buildCommand({
       cwd: '/x',

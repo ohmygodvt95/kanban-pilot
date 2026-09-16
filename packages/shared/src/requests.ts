@@ -33,6 +33,7 @@ const projectFieldsSchema = z.object({
   followup_prompt: z.string().nullable().optional(),
   done_action: doneActionSchema.optional(),
   auto_start: z.boolean().optional(),
+  browser_enabled: z.boolean().optional(),
 });
 
 export const createProjectSchema = projectFieldsSchema.extend({
@@ -53,6 +54,7 @@ export const createTaskSchema = z.object({
   description: z.string().default(''),
   executor: executorIdSchema.nullable().optional(),
   model: z.string().max(100).nullable().optional(),
+  browser: z.boolean().nullable().optional(),
   skip_refinement: z.boolean().optional(),
   source_url: z.string().nullable().optional(),
 });
@@ -63,6 +65,7 @@ export const updateTaskSchema = z.object({
   description: z.string().optional(),
   executor: executorIdSchema.nullable().optional(),
   model: z.string().max(100).nullable().optional(),
+  browser: z.boolean().nullable().optional(),
   skip_refinement: z.boolean().optional(),
   position: z.number().optional(),
   source_url: z.string().nullable().optional(),

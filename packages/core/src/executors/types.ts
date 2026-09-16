@@ -37,6 +37,11 @@ export interface ExecutorInput {
   systemPromptAppend?: string;
   /** Absolute paths of image files attached to the prompt (referenced in the prompt text too). */
   attachments?: string[];
+  /**
+   * Browser access for the agent. Claude: `--chrome` / `--no-chrome` (Claude in Chrome).
+   * undefined = leave the CLI's own default.
+   */
+  browser?: boolean;
 }
 
 export interface ExecutorAdapter {

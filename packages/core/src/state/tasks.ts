@@ -76,6 +76,7 @@ export interface CreateTaskInput {
   description?: string;
   executor?: Task['executor'];
   model?: string | null;
+  browser?: boolean | null;
   skip_refinement?: boolean;
   source_url?: string | null;
   source_provider?: Task['source_provider'];
@@ -87,15 +88,17 @@ export interface UpdateTaskInput {
   description?: string;
   executor?: Task['executor'];
   model?: string | null;
+  browser?: boolean | null;
   skip_refinement?: boolean;
   position?: number;
   source_url?: string | null;
 }
 
 /** Prompt language + template overrides for a project. */
-export function promptContext(project: Project): PromptContext {
+export function promptContext(project: Project, task?: Pick<Task, 'browser'>): PromptContext {
   return {
     lang: project.prompt_language,
+    browser: task?.browser ?? project.browser_enabled,
     overrides: {
       execute: project.execute_prompt,
       followup: project.followup_prompt,
@@ -130,6 +133,7 @@ export class TaskService {
       position,
       executor: input.executor ?? null,
       model: input.model ?? null,
+      browser: input.browser ?? null,
       skip_refinement: input.skip_refinement ?? false,
       source_url: input.source_url ?? null,
       source_provider: input.source_provider ?? null,
@@ -149,6 +153,7 @@ export class TaskService {
     if (input.description !== undefined) patch.description = input.description;
     if (input.executor !== undefined) patch.executor = input.executor;
     if (input.model !== undefined) patch.model = input.model;
+    if (input.browser !== undefined) patch.browser = input.browser;
     if (input.skip_refinement !== undefined) patch.skip_refinement = input.skip_refinement;
     if (input.position !== undefined) patch.position = input.position;
     if (input.source_url !== undefined) patch.source_url = input.source_url;
@@ -179,6 +184,7 @@ export class TaskService {
       position,
       executor: task.executor,
       model: task.model,
+      browser: task.browser,
       skip_refinement: task.skip_refinement,
       plan: task.plan,
       source_url: task.source_url,
@@ -243,7 +249,7 @@ export class TaskService {
 
   /** Followup prompt for an attempt: resume the last session if the executor can, else description + diff. */
   private async followupPrompt(task: Task, project: Project, attempt: Attempt, feedback: Comment[]) {
-    const ctx = promptContext(project);
+    const ctx = promptContext(project, task);
     const adapter = getExecutor(this.ctx.executors, attempt.executor);
     const lastSession = adapter.supportsResume ? await this.store.lastSessionRun(attempt.id) : null;
     const prompt = lastSession
@@ -428,7 +434,7 @@ export class TaskService {
 
       case 'retry': {
         if (!activeAttempt) throw new CoreError('INVALID_TRANSITION', 'no active attempt to retry');
-        const ctx = promptContext(project);
+        const ctx = promptContext(project, task);
         const adapter = getExecutor(this.ctx.executors, activeAttempt.executor);
         const lastSession = adapter.supportsResume ? await this.store.lastSessionRun(activeAttempt.id) : null;
         const lastRun = [...(await this.store.listRuns(task.id))]
@@ -512,7 +518,7 @@ export class TaskService {
       adapter.supportsResume &&
       !!task.refinement_session_id &&
       refineRun?.executor === adapter.id;
-    const prompt = buildExecutePrompt(promptContext(project), {
+    const prompt = buildExecutePrompt(promptContext(project, task), {
       task,
       worktreePath: attempt.worktree_path,
       repoPath: project.repo_path,
@@ -731,7 +737,7 @@ export class TaskService {
   async createFallbackRun(failed: Run): Promise<boolean> {
     const task = await this.store.getTask(failed.task_id);
     const project = await this.store.getProject(task.project_id);
-    const ctx = promptContext(project);
+    const ctx = promptContext(project, task);
     const attempt = failed.attempt_id ? await this.store.findAttempt(failed.attempt_id) : null;
     const comments = await this.store.commentsConsumedBy(failed.id);
     const requeue = async () => {

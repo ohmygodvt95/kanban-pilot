@@ -55,6 +55,9 @@ export class ClaudeAdapter implements ExecutorAdapter {
     }
     if (input.resumeSessionId) args.push('--resume', input.resumeSessionId);
     if (input.model) args.push('--model', input.model);
+    // Claude in Chrome: verified in headless mode (the claude-in-chrome MCP connects and exposes browser tools).
+    if (input.browser === true) args.push('--chrome');
+    else if (input.browser === false) args.push('--no-chrome');
     // Attached images live outside the worktree; grant read access to their directories (needed in plan mode).
     for (const dir of new Set((input.attachments ?? []).map((f) => dirname(f)))) args.push('--add-dir', dir);
     if (input.maxBudgetUsd !== undefined) args.push('--max-budget-usd', String(input.maxBudgetUsd));

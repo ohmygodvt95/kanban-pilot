@@ -59,5 +59,14 @@ export const MIGRATIONS: EmbeddedMigration[] = [
       "CREATE INDEX `attachments_comment_idx` ON `attachments` (`comment_id`);",
       "ALTER TABLE `projects` ADD `auto_start` integer DEFAULT false NOT NULL;"
     ]
+  },
+  {
+    "tag": "0004_nebulous_talkback",
+    "when": 1789543391278,
+    "hash": "6a5fdb5a782b32a004deb115b4de52b828866451d2918444ecc1a13ff262ea7c",
+    "sql": [
+      "ALTER TABLE `projects` ADD `browser_enabled` integer DEFAULT false NOT NULL;",
+      "ALTER TABLE `tasks` ADD `browser` integer;"
+    ]
   }
 ];

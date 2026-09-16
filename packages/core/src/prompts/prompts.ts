@@ -227,6 +227,8 @@ export const TEMPLATES: Record<PromptLanguage, PromptTemplates> = { vi: VI, en: 
 /** Per-project prompt configuration. */
 export interface PromptContext {
   lang: PromptLanguage;
+  /** The agent may drive a browser (adds a line to the constraints block). */
+  browser?: boolean;
   /** Optional project overrides (same placeholders as the built-ins). */
   overrides?: { execute?: string | null; followup?: string | null; refine?: string | null };
 }
@@ -245,6 +247,17 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
 
 function t(ctx: PromptContext): PromptTemplates {
   return TEMPLATES[ctx.lang] ?? VI;
+}
+
+/** Constraints block, extended with a browser hint when the project allows browser use. */
+function constraints(ctx: PromptContext): string {
+  const base = t(ctx).constraints;
+  if (!ctx.browser) return base;
+  const line =
+    ctx.lang === 'vi'
+      ? '- Bạn có trình duyệt (Claude in Chrome): hãy dùng nó để kiểm tra giao diện/luồng người dùng khi task liên quan tới UI, và chụp màn hình vào worktree nếu hữu ích cho người review.'
+      : '- A browser is available (Claude in Chrome): use it to verify UI/user flows when the task touches the UI, and save screenshots into the worktree if useful for the reviewer.';
+  return `${base}\n${line}`;
 }
 
 // ---------------------------------------------------------------------------

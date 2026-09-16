@@ -33,6 +33,7 @@ export interface CreateProjectInput {
   followup_prompt?: string | null;
   done_action?: Project['done_action'];
   auto_start?: boolean;
+  browser_enabled?: boolean;
   /** Adopt setup/test scripts found in the repo's .agent-kanban.json. */
   accept_repo_scripts?: boolean;
 }
@@ -101,6 +102,7 @@ export class ProjectService {
       followup_prompt: input.followup_prompt ?? null,
       done_action: input.done_action ?? 'merge',
       auto_start: input.auto_start ?? false,
+      browser_enabled: input.browser_enabled ?? false,
     });
   }
 
