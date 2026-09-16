@@ -52,7 +52,8 @@ excluded from the commit so they never leak into your repository.
 pnpm install
 pnpm test                 # vitest: core (state machine, parser fixtures, git on temp repos, runner e2e with a fake agent) + server API
 pnpm build                # turbo: shared → core → server → web → cli (esbuild bundle + web dist)
-pnpm --filter @agent-kanban/core smoke      # real Claude Code: TODO→DOING→REVIEW on a throwaway repo (needs `claude` login)
+pnpm --filter @agent-kanban/core smoke          # real Claude Code: TODO→DOING→REVIEW on a throwaway repo (needs `claude` login)
+pnpm --filter @agent-kanban/core smoke:refine   # real Claude Code: refinement questions → answers → plan
 pnpm --filter @agent-kanban/server dev      # API on :3737   (AK_FAKE=1 uses the fake agent, no API cost)
 pnpm --filter @agent-kanban/web dev         # Vite on :5173, proxies /api
 cd packages/cli && npm pack                 # tarball you can `npx ./agent-kanban-x.y.z.tgz`
