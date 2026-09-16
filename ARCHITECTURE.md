@@ -57,6 +57,13 @@ feedback; refine/chat: full context) and re-points consumed comments to it. `run
 - **Tests on demand**: job `run_tests` → `JobRunner.runTestsFor()`; `onTestsFinished` updates the REVIEW substate.
 - **done_action = pr**: `AttemptService.openPullRequest()` pushes and calls `IssueProvider.createPullRequest()`.
 - **Retention**: `Store.pruneRunEvents(days)` on start and daily.
+- **Attachments**: `attachments` table + files under `paths.attachmentsRoot/<comment>/<id>-<name>`. `TaskService.chat()`
+  stores them; prompts list them as `[image: <abs path>]`; the runner passes the paths to the adapter
+  (`ExecutorInput.attachments`). `GET /api/attachments/:id` serves them, `GET /api/attempts/:id/file?path=` serves images
+  the agent produced inside the worktree (path-confined, images only).
+- **Auto-start**: `TaskService.transition()` calls `maybeAutoStart()` whenever a task enters TODO; the machine accepts
+  `todo → doing` from the system only with `payload.auto_start`. `ProjectService.update()` starts pending tasks when the
+  flag is switched on.
 
 ## Adding an executor
 

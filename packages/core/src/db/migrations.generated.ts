@@ -49,5 +49,15 @@ export const MIGRATIONS: EmbeddedMigration[] = [
       "ALTER TABLE `runs` ADD `fallback_of_run_id` text;",
       "ALTER TABLE `tasks` ADD `model` text;"
     ]
+  },
+  {
+    "tag": "0003_dashing_dorian_gray",
+    "when": 1789541586941,
+    "hash": "d84c04ae86b292aedd1038d9f253ac3ca40f07213d332fef6093bcdfedcad4a0",
+    "sql": [
+      "CREATE TABLE `attachments` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`comment_id` text NOT NULL,\n\t`task_id` text NOT NULL,\n\t`name` text NOT NULL,\n\t`mime` text NOT NULL,\n\t`size` integer NOT NULL,\n\t`created_at` text NOT NULL,\n\tFOREIGN KEY (`comment_id`) REFERENCES `comments`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+      "CREATE INDEX `attachments_comment_idx` ON `attachments` (`comment_id`);",
+      "ALTER TABLE `projects` ADD `auto_start` integer DEFAULT false NOT NULL;"
+    ]
   }
 ];

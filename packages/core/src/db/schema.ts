@@ -35,6 +35,7 @@ export const projects = sqliteTable('projects', {
   execute_prompt: text('execute_prompt'),
   followup_prompt: text('followup_prompt'),
   done_action: text('done_action').$type<DoneAction>().notNull().default('merge'),
+  auto_start: bool('auto_start').notNull().default(false),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 });
@@ -154,6 +155,25 @@ export const comments = sqliteTable(
   (t) => [index('comments_task_idx').on(t.task_id)],
 );
 
+/** Files attached to comments. The bytes live under CorePaths.attachmentsRoot/<comment_id>/<id>. */
+export const attachments = sqliteTable(
+  'attachments',
+  {
+    id: text('id').primaryKey(),
+    comment_id: text('comment_id')
+      .notNull()
+      .references(() => comments.id, { onDelete: 'cascade' }),
+    task_id: text('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    created_at: text('created_at').notNull(),
+  },
+  (t) => [index('attachments_comment_idx').on(t.comment_id)],
+);
+
 export const refinementQuestions = sqliteTable(
   'refinement_questions',
   {
@@ -189,4 +209,14 @@ export const jobs = sqliteTable(
   (t) => [index('jobs_status_idx').on(t.status, t.run_after)],
 );
 
-export const schema = { projects, tasks, attempts, runs, runEvents, comments, refinementQuestions, jobs };
+export const schema = {
+  projects,
+  tasks,
+  attempts,
+  runs,
+  runEvents,
+  comments,
+  attachments,
+  refinementQuestions,
+  jobs,
+};

@@ -17,6 +17,7 @@ Verified on **Claude Code 2.1.260** (`claude --help`, plus captured stream-json 
 | — | Resuming a refinement session (`plan` mode, cwd = repo) into an execute run (`bypassPermissions`, cwd = worktree) works, but the model remembers absolute paths of the main repo. The execute prompt therefore states the new worktree path and forbids touching the original repo path. |
 | — | Auth check: `claude auth status` is used when available; if it is missing the adapter only verifies the binary runs. |
 | — | `--model <alias>` and `--max-budget-usd <amount>` exist and are passed from project/task settings. `--effort` exists but is not exposed yet. |
+| — | Images: there is no image flag in headless mode; the prompt lists attached files by absolute path and Claude opens them with its Read tool (which supports images). `--add-dir <dir>` is added per attachment directory so plan-mode runs may read outside the cwd. |
 | — | Resuming an unknown session: exit 1, stderr `No conversation found with session ID: …`, a `result` event with `subtype: error_during_execution`, `num_turns: 0`. `classifyFailure()` maps this to `session_not_found` → automatic retry without `--resume`. |
 
 Env forwarded to the child: every `CLAUDE_CODE_*` and `ANTHROPIC_*` variable from the server's environment,
@@ -30,6 +31,7 @@ Installed locally to read `codex exec --help`; no OpenAI account was available, 
 |---|---|
 | `codex exec --json --sandbox danger-full-access <prompt>` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access [-m model] -` — `-` reads the prompt from stdin. Refine runs use `--sandbox read-only`. |
 | resume `codex exec resume <id>` | `codex exec resume --json <thread_id> -` (confirmed subcommand and `[PROMPT]` with `-` = stdin). |
+| images | `-i, --image <FILE>...` attaches images to the initial prompt (used for chat attachments). |
 | structured output | `--output-schema <FILE>` exists → `supportsStructuredOutput=true`; the runner writes the schema to `<logs>/<run>/output-schema.json` (`ExecutorInput.outputSchemaFile`). |
 | events | JSONL: `thread.started{thread_id}` (session id), `turn.started`, `item.completed{item}`, `turn.completed{usage}`, `error{message}`. Rust log lines (`… ERROR codex_api …`) are not JSON and are stored as `raw`. |
 

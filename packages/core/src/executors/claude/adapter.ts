@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import { execa } from 'execa';
 import type { ExecutorAdapter, ExecutorCommand, ExecutorInput, NormalizedEvent } from '../types.js';
 import { tryParseJsonLine } from '../types.js';
@@ -54,6 +55,8 @@ export class ClaudeAdapter implements ExecutorAdapter {
     }
     if (input.resumeSessionId) args.push('--resume', input.resumeSessionId);
     if (input.model) args.push('--model', input.model);
+    // Attached images live outside the worktree; grant read access to their directories (needed in plan mode).
+    for (const dir of new Set((input.attachments ?? []).map((f) => dirname(f)))) args.push('--add-dir', dir);
     if (input.maxBudgetUsd !== undefined) args.push('--max-budget-usd', String(input.maxBudgetUsd));
     // NOTE: `--max-turns` is not listed by `claude --help` on 2.1.x, so maxTurns is intentionally ignored here.
     if (input.systemPromptAppend) args.push('--append-system-prompt', input.systemPromptAppend);

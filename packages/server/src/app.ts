@@ -2,7 +2,7 @@ import type { Core, Logger } from '@agent-kanban/core';
 import { Hono } from 'hono';
 import { logger as honoLogger } from 'hono/logger';
 import { errorBody, handleError } from './errors.js';
-import { attemptRoutes, commentRoutes, runRoutes } from './routes/misc.js';
+import { attachmentRoutes, attemptRoutes, commentRoutes, runRoutes } from './routes/misc.js';
 import { projectRoutes } from './routes/projects.js';
 import { taskRoutes } from './routes/tasks.js';
 import { sseRoutes } from './sse.js';
@@ -34,6 +34,7 @@ export function createApp(opts: AppOptions): Hono {
   api.route('/tasks', taskRoutes(opts.core));
   api.route('/comments', commentRoutes(opts.core));
   api.route('/attempts', attemptRoutes(opts.core));
+  api.route('/attachments', attachmentRoutes(opts.core));
   api.route('/runs', runRoutes(opts.core));
   api.route('/events', sseRoutes(opts.core));
   app.route('/api', api);

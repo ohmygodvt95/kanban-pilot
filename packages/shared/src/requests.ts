@@ -32,6 +32,7 @@ const projectFieldsSchema = z.object({
   execute_prompt: z.string().nullable().optional(),
   followup_prompt: z.string().nullable().optional(),
   done_action: doneActionSchema.optional(),
+  auto_start: z.boolean().optional(),
 });
 
 export const createProjectSchema = projectFieldsSchema.extend({

@@ -670,3 +670,117 @@ describe('resilience features', () => {
     expect(p2.test_script).toBe('false');
   });
 });
+
+describe('attachments and auto-start', () => {
+  let root: string;
+  let repo: string;
+  let core: Core;
+  const paths = () => ({
+    dbPath: join(root, 'db.sqlite'),
+    worktreesRoot: join(root, 'wt'),
+    logsRoot: join(root, 'logs'),
+    attachmentsRoot: join(root, 'att'),
+    userTemplatesDir: join(root, 'tpl'),
+    configDir: root,
+  });
+  const waitState = (id: string, column: Task['column'], substate?: Task['substate']) =>
+    core.events.waitFor(
+      'task.updated',
+      (p) =>
+        p.task.id === id &&
+        p.task.column === column &&
+        (substate === undefined || p.task.substate === substate),
+      20_000,
+    );
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'ak-att-'));
+    repo = join(root, 'repo');
+    await makeRepo(repo);
+    core = createCore({
+      paths: paths(),
+      executors: { claude: new FakeClaudeAdapter() },
+      runner: { pollIntervalMs: 50 },
+    });
+    await core.start();
+  });
+  afterEach(async () => {
+    await core.stop({ killProcesses: true });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+
+  it('stores images sent with a chat message and references them in the prompt', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const task = await core.tasks.create(project.id, { title: 'img', description: 'x' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const reviewP = waitState(task.id, 'review');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await reviewP;
+    await core.tasks.chat(task.id, 'match this design', [
+      { name: 'mock up.png', mime: 'image/png', data: png },
+    ]);
+    await waitState(task.id, 'review');
+    const detail = await core.tasks.detail(task.id);
+    const comment = detail.comments.find((c) => c.kind === 'chat')!;
+    expect(comment.attachments).toHaveLength(1);
+    const att = comment.attachments[0]!;
+    expect(att.mime).toBe('image/png');
+    const file = core.tasks.attachmentPath(att);
+    expect(file.startsWith(join(root, 'att'))).toBe(true);
+    expect((await readFile(file)).byteLength).toBe(png.byteLength);
+    const followup = detail.runs.at(-1)!;
+    expect(followup.prompt).toContain(`1. match this design\n   [image: ${file}]`);
+    // non-image / oversized uploads are rejected
+    await expect(
+      core.tasks.chat(task.id, 'bad', [{ name: 'x.txt', mime: 'text/plain', data: png }]),
+    ).rejects.toMatchObject({ code: 'VALIDATION' });
+  });
+
+  it('planner chat with an image passes the path to the executor', async () => {
+    const project = await core.projects.create({ repo_path: repo });
+    const task = await core.tasks.create(project.id, { title: 'plan img', description: 'x' });
+    const done = core.events.waitFor(
+      'run.updated',
+      (p) => p.run.task_id === task.id && p.run.kind === 'chat' && p.run.status === 'succeeded',
+      20_000,
+    );
+    await core.tasks.chat(task.id, 'what about this?', [{ name: 'a.png', mime: 'image/png', data: png }]);
+    const run = (await done).run;
+    expect(run.prompt).toMatch(/Ảnh đính kèm[\s\S]*a\.png/);
+  });
+
+  it('auto_start launches tasks entering TODO and honours max_concurrent_runs', async () => {
+    const project = await core.projects.create({
+      repo_path: repo,
+      refinement_enabled: false,
+      auto_start: true,
+      max_concurrent_runs: 1,
+    });
+    const a = await core.tasks.create(project.id, { title: 'a', description: 'FAKE:sleep=700' });
+    const b = await core.tasks.create(project.id, { title: 'b', description: 'quick' });
+    const aDone = waitState(a.id, 'review');
+    const bDone = waitState(b.id, 'review');
+    const startedA = await core.tasks.transition(a.id, 'todo', 'user');
+    expect(startedA.column).toBe('doing'); // moved on automatically
+    const startedB = await core.tasks.transition(b.id, 'todo', 'user');
+    expect(startedB.column).toBe('doing');
+    expect(startedB.substate).toBe('queued');
+    await new Promise((r) => setTimeout(r, 300));
+    // only one agent runs at a time
+    expect((await core.store.getTask(b.id)).substate).toBe('queued');
+    await aDone;
+    await bDone;
+    expect(startedA.current_attempt_id).not.toBe(startedB.current_attempt_id);
+  });
+
+  it('switching auto_start on starts tasks already waiting in TODO', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const t = await core.tasks.create(project.id, { title: 'waiting', description: 'x' });
+    expect((await core.tasks.transition(t.id, 'todo', 'user')).column).toBe('todo');
+    const reviewP = waitState(t.id, 'review');
+    await core.projects.update(project.id, { auto_start: true });
+    expect((await core.store.getTask(t.id)).column).toBe('doing');
+    await reviewP;
+  });
+});

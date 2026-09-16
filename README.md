@@ -33,7 +33,12 @@ Everything is stored in one SQLite file (`~/.config/agent-kanban/db.sqlite`); wo
   (`POST /tasks/:id/chat` → followup / retry run). The task goes back to Review when the agent finishes.
 - In **Backlog** / **To do** the message goes to the *planner* (read-only refine session): it answers in the chat and
   may return an updated plan; the task does not move.
-- While the agent is running the composer is disabled and the agent's latest text streams into the conversation.
+- Messages typed while the agent runs are queued and delivered as feedback right after the run ends; the agent's
+  latest text streams into the conversation meanwhile.
+- **Images both ways.** Paste, drop or attach screenshots (png/jpeg/gif/webp, ≤10 MB, 6 per message). They are
+  stored under `~/.config/agent-kanban/attachments/` and handed to the CLI (Claude reads them with its Read tool and
+  gets `--add-dir` for the folder; Codex gets `-i <file>`). Images the agent writes into the worktree and references
+  in its reply (`![](screenshot.png)`) are rendered inline.
 
 Invariants: the agent never moves cards (the system does, from process exit codes + diff + tests);
 every CLI invocation is a `run` with its full command, event stream, session id and cost;
@@ -52,6 +57,8 @@ the main working tree of your repo is never touched by an agent.
 - **Update from base.** Merge the base branch into an attempt from Review; conflicts are handed to the agent as a
   followup and the merge is committed by the system.
 - **Queued chat.** Messages typed while the agent works are delivered as feedback right after the run ends.
+- **Auto-start.** Project option: every task that reaches To do starts immediately; `max_concurrent_runs` bounds the
+  parallelism and the rest wait in Doing as *queued*. Turning it on also starts tasks already waiting in To do.
 - **Retention.** Event streams of DONE runs older than 30 days are pruned (`--retention-days`, 0 = never); run
   metadata (cost, summary) stays. Merged attempts remain diffable via `base..branch`.
 - **Notifications.** The bell in the header enables browser notifications for Review / error / planner questions.
@@ -63,7 +70,7 @@ the main working tree of your repo is never touched by an agent.
 Executor, model, max budget per run, base branch (auto-detected from `origin/HEAD`), setup script (runs in the
 worktree before the agent, e.g. `pnpm install`), test script, `auto_done` (complete automatically when tests pass —
 off by default), `done_action` (merge locally or open a PR), refinement on/off, max concurrent runs, run timeout,
-prompt language (vi/en) and custom prompt templates (refine / execute / followup).
+`auto_start`, prompt language (vi/en) and custom prompt templates (refine / execute / followup).
 A committed `<repo>/.agent-kanban.json` provides defaults when the project is added:
 
 ```json

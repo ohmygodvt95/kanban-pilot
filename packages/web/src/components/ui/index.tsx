@@ -286,11 +286,12 @@ export function EmptyState({ children, icon }: { children: ReactNode; icon?: Rea
   );
 }
 
-export function KeyValue({ items }: { items: { k: ReactNode; v: ReactNode }[] }) {
+/** Two-column definition list; `k` doubles as the React key so labels must be unique. */
+export function KeyValue({ items }: { items: { k: string; v: ReactNode }[] }) {
   return (
     <dl className="grid grid-cols-[minmax(110px,auto)_1fr] gap-x-4 gap-y-1.5 text-xs">
-      {items.map((it, i) => (
-        <div key={i} className="contents">
+      {items.map((it) => (
+        <div key={it.k} className="contents">
           <dt className="text-zinc-500">{it.k}</dt>
           <dd className="min-w-0 break-words text-zinc-800 dark:text-zinc-200">{it.v}</dd>
         </div>

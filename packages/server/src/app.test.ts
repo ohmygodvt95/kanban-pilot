@@ -224,6 +224,46 @@ describe('HTTP API', () => {
     expect((await post('/api/projects', { repo_path: repo2, accept_repo_scripts: true })).status).toBe(201);
   });
 
+  it('accepts images in chat and serves attachments and worktree images', async () => {
+    const t = await json<Task>(
+      await post(`/api/projects/${project.id}/tasks`, { title: 'img', description: 'x' }),
+    );
+    await post(`/api/tasks/${t.id}/transition`, { target: 'todo' });
+    const reviewP = waitState(t.id, 'review');
+    await post(`/api/tasks/${t.id}/transition`, { target: 'doing' });
+    await reviewP;
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const form = new FormData();
+    form.set('message', 'like this');
+    form.append('files', new File([png], 'ref.png', { type: 'image/png' }));
+    const res = await app.request(`/api/tasks/${t.id}/chat`, { method: 'POST', body: form });
+    expect(res.status).toBe(200);
+    await waitState(t.id, 'review');
+    const detail = await json<TaskDetail>(await app.request(`/api/tasks/${t.id}`));
+    const chat = detail.comments.find((c) => c.kind === 'chat')!;
+    expect(chat.attachments).toHaveLength(1);
+    const bytes = await app.request(`/api/attachments/${chat.attachments[0]!.id}`);
+    expect(bytes.status).toBe(200);
+    expect(bytes.headers.get('content-type')).toBe('image/png');
+    expect(new Uint8Array(await bytes.arrayBuffer())).toEqual(png);
+    // worktree image serving: write a png into the worktree, fetch it; block traversal and non-images
+    const wt = detail.current_attempt!.worktree_path;
+    await writeFile(join(wt, 'shot.png'), png);
+    const img = await app.request(`/api/attempts/${detail.current_attempt!.id}/file?path=shot.png`);
+    expect(img.status).toBe(200);
+    expect(
+      (await app.request(`/api/attempts/${detail.current_attempt!.id}/file?path=../../etc/passwd`)).status,
+    ).toBe(400);
+    expect(
+      (await app.request(`/api/attempts/${detail.current_attempt!.id}/file?path=agent.txt`)).status,
+    ).toBe(400);
+    // bad type via multipart → 400
+    const bad = new FormData();
+    bad.set('message', 'x');
+    bad.append('files', new File([png], 'a.txt', { type: 'text/plain' }));
+    expect((await app.request(`/api/tasks/${t.id}/chat`, { method: 'POST', body: bad })).status).toBe(400);
+  });
+
   it('serves the SPA with fallback and keeps /api JSON 404s', async () => {
     expect((await app.request('/api/nothing')).status).toBe(404);
     expect((await json<{ error: { code: string } }>(await app.request('/api/nothing'))).error.code).toBe(

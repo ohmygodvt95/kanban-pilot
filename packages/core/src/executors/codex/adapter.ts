@@ -39,6 +39,8 @@ export class CodexAdapter implements ExecutorAdapter {
   buildCommand(input: ExecutorInput): ExecutorCommand {
     const common = ['--json', '--skip-git-repo-check'];
     if (input.model) common.push('-m', input.model);
+    // `-i <FILE>` attaches images to the initial prompt.
+    for (const f of input.attachments ?? []) common.push('-i', f);
     if (input.resumeSessionId) {
       return {
         bin: this.bin,

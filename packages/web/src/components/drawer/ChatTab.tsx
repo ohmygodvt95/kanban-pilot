@@ -1,7 +1,15 @@
 import type { Comment, NormalizedEvent, Project, Run, TaskDetail } from '@agent-kanban/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Bot, ChevronDown, ChevronRight, CornerDownLeft, Send, User } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, ChevronDown, ChevronRight, CornerDownLeft, ImagePlus, Send, User, X } from 'lucide-react';
+import {
+  type ClipboardEvent,
+  type DragEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import Markdown from 'react-markdown';
 import { api } from '../../api/client';
 import { keys, upsertTask, useRunEvents } from '../../api/queries';
@@ -10,31 +18,85 @@ import { isBusy } from '../../lib/state';
 import { Button, inputClass } from '../ui';
 import { useToast } from '../ui/Toast';
 
+const ACCEPT = 'image/png,image/jpeg,image/gif,image/webp';
+const MAX_FILES = 6;
+
+/** Images picked for the next message, with object URLs for previews. */
+interface Pending {
+  file: File;
+  url: string;
+}
+
 /** A conversation view over runs + comments, with a composer that calls POST /tasks/:id/chat. */
 export function ChatTab({ task, project }: { task: TaskDetail; project: Project }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [dragging, setDragging] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const busy = isBusy(task);
   const activeRun = task.runs.find((r) => r.status === 'running');
 
   const send = useMutation({
-    mutationFn: (message: string) => api.tasks.chat(task.id, message),
+    mutationFn: ({ message, files }: { message: string; files: File[] }) =>
+      api.tasks.chat(task.id, message, files),
     onSuccess: (t) => {
       upsertTask(qc, t);
       setDraft('');
+      clearPending();
       void qc.invalidateQueries({ queryKey: keys.task(task.id) });
     },
     onError: (err) => toast.error(err, 'Cannot send'),
   });
 
+  const addFiles = (files: Iterable<File>) => {
+    const images = [...files].filter((f) => ACCEPT.split(',').includes(f.type));
+    if (images.length === 0) return;
+    setPending((old) => {
+      const next = [...old, ...images.map((file) => ({ file, url: URL.createObjectURL(file) }))];
+      if (next.length > MAX_FILES)
+        toast.push({ kind: 'error', text: `At most ${MAX_FILES} images per message` });
+      return next.slice(0, MAX_FILES);
+    });
+  };
+  const clearPending = () =>
+    setPending((old) => {
+      for (const p of old) URL.revokeObjectURL(p.url);
+      return [];
+    });
+  const removePending = (url: string) =>
+    setPending((old) => {
+      URL.revokeObjectURL(url);
+      return old.filter((p) => p.url !== url);
+    });
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...e.clipboardData.files];
+    if (files.length) {
+      e.preventDefault();
+      addFiles(files);
+    }
+  };
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragging(false);
+    addFiles(e.dataTransfer.files);
+  };
+
   const timeline = useMemo(() => buildTimeline(task), [task]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when the timeline changes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
   }, [timeline.length, activeRun?.id]);
 
   const state = composerState(task, project);
+  const canSend = !state.disabled && (draft.trim().length > 0 || pending.length > 0);
+  const submit = () => {
+    if (!canSend) return;
+    send.mutate({ message: draft.trim(), files: pending.map((p) => p.file) });
+  };
+  const attemptId = task.current_attempt?.status === 'active' ? task.current_attempt.id : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -42,51 +104,101 @@ export function ChatTab({ task, project }: { task: TaskDetail; project: Project 
         {timeline.length === 0 ? (
           <div className="mx-auto max-w-md py-10 text-center text-sm text-zinc-500">
             <Bot size={28} className="mx-auto mb-2 text-zinc-400" />
-            No conversation yet. Ask the planner about the task, or start it and come back with feedback.
+            No conversation yet. Ask the planner about the task, or start it and come back with feedback. You
+            can paste or drop screenshots.
           </div>
         ) : null}
         <div className="grid gap-3">
           {timeline.map((item) => (
-            <TimelineItem key={item.key} item={item} />
+            <TimelineItem key={item.key} item={item} attemptId={attemptId} />
           ))}
-          {activeRun ? <LiveAssistant run={activeRun} /> : null}
+          {activeRun ? <LiveAssistant run={activeRun} attemptId={attemptId} /> : null}
         </div>
         <div ref={bottomRef} />
       </div>
-      <div className="border-zinc-200 border-t bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+
+      <div
+        className={`border-zinc-200 border-t bg-white p-3 transition dark:border-zinc-800 dark:bg-zinc-900 ${dragging ? 'ring-2 ring-accent-400 ring-inset' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!state.disabled) setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
+      >
         <div className="mb-1.5 flex items-center justify-between text-[11px] text-zinc-500">
           <span>{state.hint}</span>
           <span className="hidden sm:inline">
             <kbd className="rounded border border-zinc-300 px-1 dark:border-zinc-600">Ctrl</kbd> +{' '}
-            <kbd className="rounded border border-zinc-300 px-1 dark:border-zinc-600">Enter</kbd> to send
+            <kbd className="rounded border border-zinc-300 px-1 dark:border-zinc-600">Enter</kbd> to send ·
+            paste or drop images
           </span>
         </div>
+        {pending.length ? (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {pending.map((p) => (
+              <div
+                key={p.url}
+                className="group relative h-16 w-16 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700"
+              >
+                <img src={p.url} alt={p.file.name} className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  aria-label={`Remove ${p.file.name}`}
+                  onClick={() => removePending(p.url)}
+                  className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white opacity-0 transition group-hover:opacity-100"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="flex items-end gap-2">
+          <input
+            ref={fileInput}
+            type="file"
+            accept={ACCEPT}
+            multiple
+            hidden
+            onChange={(e) => e.target.files && addFiles(e.target.files)}
+          />
+          <button
+            type="button"
+            title="Attach images (png, jpeg, gif, webp)"
+            aria-label="Attach images"
+            disabled={state.disabled}
+            onClick={() => fileInput.current?.click()}
+            className="flex h-[60px] w-10 shrink-0 items-center justify-center rounded-md border border-zinc-300 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-50 dark:border-zinc-600 dark:hover:bg-zinc-800"
+          >
+            <ImagePlus size={18} />
+          </button>
           <textarea
             className={`${inputClass} min-h-[60px] max-h-48 flex-1 resize-y`}
             placeholder={state.placeholder}
             value={draft}
             disabled={state.disabled}
             onChange={(e) => setDraft(e.target.value)}
+            onPaste={onPaste}
             onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && draft.trim() && !state.disabled)
-                send.mutate(draft.trim());
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submit();
             }}
           />
           <Button
             variant="primary"
             className="h-[60px] px-4"
-            disabled={state.disabled || !draft.trim()}
+            disabled={!canSend}
             loading={send.isPending}
-            onClick={() => send.mutate(draft.trim())}
+            onClick={submit}
             icon={<Send size={14} />}
           >
             {state.action}
           </Button>
         </div>
-        {busy ? (
-          <p className="mt-1.5 text-[11px] text-zinc-500">
-            The agent is working. Messages can be sent once it finishes (or cancel the run from Overview).
+        {busy && task.unconsumed_feedback ? (
+          <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+            {task.unconsumed_feedback} message{task.unconsumed_feedback === 1 ? '' : 's'} queued for the next
+            run.
           </p>
         ) : null}
       </div>
@@ -106,10 +218,17 @@ function composerState(
       placeholder: 'Clone the task to continue the conversation.',
       action: 'Send',
     };
+  if (task.column === 'doing' && busy)
+    return {
+      disabled: false,
+      hint: 'Agent is working. Your message is queued and sent as soon as this run finishes.',
+      placeholder: 'e.g. "When you are done, also add a changelog entry"',
+      action: 'Queue',
+    };
   if (busy)
     return {
       disabled: true,
-      hint: 'Agent is running…',
+      hint: 'The planner is answering…',
       placeholder: 'Wait for the current run to finish.',
       action: 'Send',
     };
@@ -127,8 +246,6 @@ function composerState(
       placeholder: 'e.g. "The build fails because X; use Y instead"',
       action: 'Send & retry',
     };
-  if (task.column === 'doing')
-    return { disabled: true, hint: 'Agent is queued…', placeholder: '', action: 'Send' };
   const planner = project.refinement_enabled || task.refinement_session_id;
   return {
     disabled: false,
@@ -138,6 +255,46 @@ function composerState(
     placeholder: 'e.g. "Which files would you touch? Prefer the existing utils module."',
     action: 'Ask',
   };
+}
+
+// ---- markdown with images ---------------------------------------------------
+
+/**
+ * Markdown renderer for agent replies. Relative image paths (or absolute paths
+ * inside the worktree) are rewritten to the worktree image endpoint so screenshots
+ * produced by the agent show up inline.
+ */
+function AgentMarkdown({ text, attemptId }: { text: string; attemptId: string | null }) {
+  return (
+    <Markdown
+      components={{
+        img: ({ src, alt }) => {
+          const resolved = resolveImageSrc(typeof src === 'string' ? src : '', attemptId);
+          if (!resolved) return <span className="text-zinc-400">[image: {alt || src}]</span>;
+          return (
+            <a href={resolved} target="_blank" rel="noreferrer">
+              <img
+                src={resolved}
+                alt={alt ?? ''}
+                className="my-1 max-h-72 rounded-md border border-zinc-200 dark:border-zinc-700"
+              />
+            </a>
+          );
+        },
+      }}
+    >
+      {text}
+    </Markdown>
+  );
+}
+
+function resolveImageSrc(src: string, attemptId: string | null): string | null {
+  if (!src) return null;
+  if (/^(https?:|data:|blob:)/i.test(src) || src.startsWith('/api/')) return src;
+  if (!attemptId) return null;
+  // strip a leading "./" or the absolute worktree prefix (…/worktrees/<project>/<attempt>/)
+  const rel = src.replace(/^\.\//, '').replace(/^.*\/worktrees\/[^/]+\/[^/]+\//, '');
+  return `/api/attempts/${attemptId}/file?path=${encodeURIComponent(rel)}`;
 }
 
 // ---- timeline ---------------------------------------------------------------
@@ -220,6 +377,7 @@ function buildTimeline(task: TaskDetail): Item[] {
           line: null,
           consumed_by_run_id: null,
           created_at: q.answered_at ?? '',
+          attachments: [],
         })),
       });
     }
@@ -238,15 +396,43 @@ function describeRunStart(run: Run): string {
     case 'refine':
       return run.resumed_from_session_id ? 'Refinement resumed with your answers' : 'Refinement requested';
     case 'execute':
-      return 'Attempt started with the description and plan';
+      return run.fallback_of_run_id
+        ? 'Session lost — restarted with a fresh session'
+        : 'Attempt started with the description and plan';
     case 'followup':
-      return 'Retry requested';
+      return run.fallback_of_run_id
+        ? 'Session lost — feedback re-sent with the current diff'
+        : 'Retry requested';
     case 'chat':
       return 'Message sent';
   }
 }
 
-function TimelineItem({ item }: { item: Item }) {
+/** Thumbnails of a comment's image attachments; click opens the full image. */
+function AttachmentStrip({ attachments }: { attachments: Comment['attachments'] }) {
+  if (!attachments.length) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {attachments.map((a) => (
+        <a
+          key={a.id}
+          href={`/api/attachments/${a.id}`}
+          target="_blank"
+          rel="noreferrer"
+          title={`${a.name} · ${Math.round(a.size / 1024)} KB`}
+        >
+          <img
+            src={`/api/attachments/${a.id}`}
+            alt={a.name}
+            className="h-24 max-w-48 rounded-md border border-white/30 object-cover"
+          />
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function TimelineItem({ item, attemptId }: { item: Item; attemptId: string | null }) {
   if (item.kind === 'system') {
     return (
       <div className="flex justify-center">
@@ -281,12 +467,13 @@ function TimelineItem({ item }: { item: Item }) {
               <div className="md [&_a]:text-white [&_code]:bg-white/20">
                 <Markdown>{c.body}</Markdown>
               </div>
+              <AttachmentStrip attachments={c.attachments} />
             </div>
           ))}
           <div className="flex items-center justify-end gap-1 text-[10px] text-zinc-400">
             <User size={10} /> you · {formatClock(item.at)}
             {item.key === 'pending' ? (
-              <span className="text-amber-600 dark:text-amber-300"> · not sent yet</span>
+              <span className="text-amber-600 dark:text-amber-300"> · queued, not sent yet</span>
             ) : null}
           </div>
         </div>
@@ -309,7 +496,7 @@ function TimelineItem({ item }: { item: Item }) {
           ) : null}
           {item.body ? (
             <div className="md leading-relaxed">
-              <Markdown>{item.body}</Markdown>
+              <AgentMarkdown text={item.body} attemptId={attemptId} />
             </div>
           ) : !failed ? (
             <span className="text-zinc-400 italic">(no summary returned)</span>
@@ -347,7 +534,7 @@ function Collapsed({ label, text }: { label: string; text: string }) {
 }
 
 /** Streams the running agent's latest text into the conversation. */
-function LiveAssistant({ run }: { run: Run }) {
+function LiveAssistant({ run, attemptId }: { run: Run; attemptId: string | null }) {
   const events = useRunEvents(run.id);
   const texts = (events.data ?? [])
     .map((e) => e.payload as NormalizedEvent)
@@ -360,7 +547,7 @@ function LiveAssistant({ run }: { run: Run }) {
         <div className="rounded-2xl rounded-bl-md border border-accent-200 bg-white px-3.5 py-2.5 text-[13px] shadow-sm dark:border-accent-900 dark:bg-zinc-800">
           {last ? (
             <div className="md leading-relaxed">
-              <Markdown>{last.text}</Markdown>
+              <AgentMarkdown text={last.text} attemptId={attemptId} />
             </div>
           ) : null}
           <div className="ak-typing mt-1 flex items-center gap-1 text-accent-600 dark:text-accent-300">

@@ -35,6 +35,8 @@ export interface ExecutorInput {
   maxBudgetUsd?: number;
   maxTurns?: number;
   systemPromptAppend?: string;
+  /** Absolute paths of image files attached to the prompt (referenced in the prompt text too). */
+  attachments?: string[];
 }
 
 export interface ExecutorAdapter {

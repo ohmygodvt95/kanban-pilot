@@ -25,6 +25,7 @@ const comment = (over: Partial<Comment>): Comment => ({
   line: null,
   consumed_by_run_id: null,
   created_at: '',
+  attachments: [],
   ...over,
 });
 
@@ -89,6 +90,28 @@ describe('prompts', () => {
     const r = buildRetryPrompt(en, 'boom', [comment({ body: 'try harder' })]);
     expect(r).toContain('boom');
     expect(r).toContain('Additional notes from the user:\n1. try harder');
+    // attached images are listed by absolute path under the comment
+    const withImage = buildFollowupPrompt(
+      en,
+      [
+        comment({
+          body: 'see screenshot',
+          attachments: [
+            {
+              id: 'a1',
+              comment_id: 'c',
+              task_id: 't',
+              name: 'shot.png',
+              mime: 'image/png',
+              size: 1,
+              created_at: '',
+            },
+          ],
+        }),
+      ],
+      (a) => `/att/${a.comment_id}/${a.id}-${a.name}`,
+    );
+    expect(withImage).toContain('1. see screenshot\n   [image: /att/c/a1-shot.png]');
   });
 
   it('truncates the diff for non-resumable executors', () => {

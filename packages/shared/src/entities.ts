@@ -41,6 +41,8 @@ export const projectSchema = z.object({
   followup_prompt: nullableString,
   /** REVIEW → DONE behaviour: local merge or push + pull request. */
   done_action: doneActionSchema,
+  /** Start every task automatically when it reaches TODO (bounded by max_concurrent_runs). */
+  auto_start: z.boolean(),
   created_at: isoDate,
   updated_at: isoDate,
 });
@@ -132,6 +134,18 @@ export const runEventSchema = z.object({
 });
 export type RunEvent = z.infer<typeof runEventSchema>;
 
+/** A file (image) attached to a chat/feedback comment; served at /api/attachments/:id. */
+export const attachmentSchema = z.object({
+  id: z.string(),
+  comment_id: z.string(),
+  task_id: z.string(),
+  name: z.string(),
+  mime: z.string(),
+  size: z.number().int(),
+  created_at: isoDate,
+});
+export type Attachment = z.infer<typeof attachmentSchema>;
+
 export const commentSchema = z.object({
   id: z.string(),
   task_id: z.string(),
@@ -142,6 +156,8 @@ export const commentSchema = z.object({
   line: z.number().int().nullable(),
   consumed_by_run_id: nullableString,
   created_at: isoDate,
+  /** Images attached to the comment (empty for most comments). */
+  attachments: z.array(attachmentSchema),
 });
 export type Comment = z.infer<typeof commentSchema>;
 

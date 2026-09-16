@@ -24,6 +24,7 @@ import type {
   RunTestsJobPayload,
   SetupJobPayload,
 } from '../runs/runs.js';
+import { attachmentFilePath } from '../state/tasks.js';
 import { errorMessage } from '../util/errors.js';
 import {
   type AgentExit,
@@ -327,10 +328,15 @@ export class JobRunner {
     const cwd = attempt?.worktree_path ?? project.repo_path;
     const readOnly = run.kind === 'refine' || run.kind === 'chat';
     const schema = run.kind === 'refine' ? REFINE_SCHEMA : run.kind === 'chat' ? CHAT_SCHEMA : undefined;
+    // Images attached to the comments this run consumes (chat / feedback).
+    const attachmentPaths = (await store.commentsConsumedBy(run.id))
+      .flatMap((c) => c.attachments)
+      .map((a) => attachmentFilePath(this.ctx.paths.attachmentsRoot, a));
     const input: ExecutorInput = {
       cwd,
       prompt: run.prompt,
       mode: readOnly ? 'refine' : 'execute',
+      attachments: attachmentPaths.length ? attachmentPaths : undefined,
       resumeSessionId:
         adapter.supportsResume && run.resumed_from_session_id ? run.resumed_from_session_id : undefined,
       outputSchema: adapter.supportsStructuredOutput ? schema : undefined,

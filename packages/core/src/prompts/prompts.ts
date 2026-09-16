@@ -288,6 +288,7 @@ export interface ExecutePromptInput {
   resumingRefinement: boolean;
   /** Feedback from previous attempts (Restart flow). */
   previousFeedback?: Comment[];
+  attachmentPath?: (a: Comment['attachments'][number]) => string;
 }
 
 export function buildExecutePrompt(ctx: PromptContext, input: ExecutePromptInput): string {
@@ -311,19 +312,40 @@ export function buildExecutePrompt(ctx: PromptContext, input: ExecutePromptInput
   });
 }
 
-/** `1. [path:line] body` list used by followup / retry / restart prompts. */
-export function formatFeedbackList(comments: Comment[]): string {
+/**
+ * `1. [path:line] body` list used by followup / retry / restart prompts. Attached
+ * images are listed by absolute path so the agent can open them with its Read tool.
+ */
+export function formatFeedbackList(
+  comments: Comment[],
+  attachmentPath: (a: Comment['attachments'][number]) => string = () => '',
+): string {
   return comments
     .map((c, i) => {
       const loc = c.file_path ? `[${c.file_path}${c.line ? `:${c.line}` : ''}] ` : '';
-      return `${i + 1}. ${loc}${c.body.trim()}`;
+      const images = c.attachments.map((a) => `\n   [image: ${attachmentPath(a)}]`).join('');
+      return `${i + 1}. ${loc}${c.body.trim()}${images}`;
     })
     .join('\n');
 }
 
-export function buildFollowupPrompt(ctx: PromptContext, comments: Comment[]): string {
+/** Section listing attached images for prompts that are not comment lists (planner chat). */
+export function formatAttachments(lang: PromptLanguage, paths: string[]): string {
+  if (!paths.length) return '';
+  const heading =
+    lang === 'vi'
+      ? 'Ảnh đính kèm (mở bằng tool Read để xem):'
+      : 'Attached images (open them with the Read tool):';
+  return `\n\n${heading}\n${paths.map((p) => `- ${p}`).join('\n')}`;
+}
+
+export function buildFollowupPrompt(
+  ctx: PromptContext,
+  comments: Comment[],
+  attachmentPath?: (a: Comment['attachments'][number]) => string,
+): string {
   const template = ctx.overrides?.followup?.trim() ? ctx.overrides.followup : t(ctx).followup;
-  return renderTemplate(template, { feedback: formatFeedbackList(comments) });
+  return renderTemplate(template, { feedback: formatFeedbackList(comments, attachmentPath) });
 }
 
 export const MAX_DIFF_CHARS = 20_000;
@@ -334,6 +356,7 @@ export function buildFollowupPromptWithoutResume(
   task: Pick<Task, 'title' | 'description' | 'plan'>,
   diff: string,
   comments: Comment[],
+  attachmentPath?: (a: Comment['attachments'][number]) => string,
 ): string {
   const tpl = t(ctx);
   const truncated =
@@ -345,7 +368,7 @@ export function buildFollowupPromptWithoutResume(
     description: task.description,
     plan_section: task.plan ? `\n${tpl.headings.plan}\n${task.plan}\n` : '',
     diff: truncated,
-    followup: buildFollowupPrompt(ctx, comments),
+    followup: buildFollowupPrompt(ctx, comments, attachmentPath),
   });
 }
 
@@ -353,12 +376,15 @@ export function buildRetryPrompt(
   ctx: PromptContext,
   errorMessage: string | null,
   extraFeedback: Comment[] = [],
+  attachmentPath?: (a: Comment['attachments'][number]) => string,
 ): string {
   const tpl = t(ctx);
   const extraHeading = ctx.lang === 'vi' ? 'Người dùng bổ sung:' : 'Additional notes from the user:';
   return renderTemplate(tpl.retry, {
     error: errorMessage ?? (ctx.lang === 'vi' ? '(không rõ)' : '(unknown)'),
-    extra_feedback: extraFeedback.length ? `\n${extraHeading}\n${formatFeedbackList(extraFeedback)}\n` : '',
+    extra_feedback: extraFeedback.length
+      ? `\n${extraHeading}\n${formatFeedbackList(extraFeedback, attachmentPath)}\n`
+      : '',
     constraints: tpl.constraints,
   });
 }
@@ -369,7 +395,7 @@ export function buildPlannerChatPrompt(
   task: Pick<Task, 'title' | 'description' | 'plan'>,
   message: string,
   qa: QA[],
-  opts: { structuredOutputSupported: boolean; resuming: boolean },
+  opts: { structuredOutputSupported: boolean; resuming: boolean; attachments?: string[] },
 ): string {
   const tpl = t(ctx);
   const context = opts.resuming
@@ -380,7 +406,10 @@ export function buildPlannerChatPrompt(
         plan_section: task.plan ? `\n${tpl.headings.plan}\n${task.plan}\n` : '',
         qa_section: formatQa(qa) ? `\n${tpl.headings.qa}\n${formatQa(qa)}\n` : '',
       });
-  const body = renderTemplate(tpl.chat, { message, context });
+  const body = renderTemplate(tpl.chat, {
+    message: message + formatAttachments(ctx.lang, opts.attachments ?? []),
+    context,
+  });
   return opts.structuredOutputSupported
     ? body
     : body + renderTemplate(tpl.jsonFallback, { schema: JSON.stringify(CHAT_SCHEMA) });

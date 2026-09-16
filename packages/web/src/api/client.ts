@@ -33,7 +33,11 @@ export class ApiError extends Error {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
-    headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.headers ?? {}) },
+    // JSON bodies are strings; FormData must keep its own multipart content-type (with boundary).
+    headers: {
+      ...(typeof init.body === 'string' ? { 'content-type': 'application/json' } : {}),
+      ...(init.headers ?? {}),
+    },
   });
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -86,7 +90,14 @@ export const api = {
     clone: (id: string) => request<Task>(`/tasks/${id}/clone`, { method: 'POST' }),
     addComment: (id: string, input: CreateCommentInput) =>
       request<Comment>(`/tasks/${id}/comments`, json(input)),
-    chat: (id: string, message: string) => request<Task>(`/tasks/${id}/chat`, json({ message })),
+    /** Send a chat message, optionally with image files (multipart). */
+    chat: (id: string, message: string, files: File[] = []) => {
+      if (files.length === 0) return request<Task>(`/tasks/${id}/chat`, json({ message }));
+      const form = new FormData();
+      form.set('message', message);
+      for (const f of files) form.append('files', f, f.name);
+      return request<Task>(`/tasks/${id}/chat`, { method: 'POST', body: form });
+    },
     answer: (id: string, qid: string, answer: string) =>
       request<Task>(`/tasks/${id}/questions/${qid}/answer`, json({ answer })),
     restart: (id: string) => request<Task>(`/tasks/${id}/attempts/restart`, { method: 'POST' }),

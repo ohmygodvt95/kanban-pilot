@@ -12,6 +12,8 @@ export interface CorePaths {
   logsRoot: string;
   /** ~/.config/agent-kanban/templates (user overrides for instruction files) */
   userTemplatesDir: string;
+  /** ~/.config/agent-kanban/attachments/<comment_id>/ — images attached to chat messages */
+  attachmentsRoot: string;
 }
 
 export function defaultPaths(env: NodeJS.ProcessEnv = process.env): CorePaths {
@@ -25,5 +27,6 @@ export function defaultPaths(env: NodeJS.ProcessEnv = process.env): CorePaths {
     worktreesRoot: join(cacheHome, 'agent-kanban', 'worktrees'),
     logsRoot: join(cacheHome, 'agent-kanban', 'logs'),
     userTemplatesDir: join(configDir, 'templates'),
+    attachmentsRoot: join(configDir, 'attachments'),
   };
 }

@@ -21,6 +21,8 @@ export interface TransitionPayload {
   substate?: Substate;
   /** system: error text stored on the task (DOING(error), refine failures) */
   error_message?: string;
+  /** system: the project auto-starts tasks that reach TODO */
+  auto_start?: boolean;
   /** system: refinement outputs */
   plan?: string;
   refinement_session_id?: string;
@@ -149,7 +151,7 @@ export function decide(
     }
     case 'todo': {
       if (target === 'doing') {
-        if (actor !== 'user') throw invalid('only the user can start a task');
+        if (actor !== 'user' && !payload.auto_start) throw invalid('only the user can start a task');
         if (ctx.hasActiveRun) throw invalid('a run is already active for this task');
         if (ctx.activeAttempt) throw invalid('task already has an active attempt; discard or restart it');
         return { kind: 'start_attempt' };

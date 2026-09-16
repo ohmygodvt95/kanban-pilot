@@ -1,4 +1,4 @@
-import type { Core } from '@agent-kanban/core';
+import type { Core, UploadedFile } from '@agent-kanban/core';
 import {
   answerQuestionSchema,
   chatMessageSchema,
@@ -7,6 +7,7 @@ import {
   updateTaskSchema,
 } from '@agent-kanban/shared';
 import { Hono } from 'hono';
+import { errorBody } from '../errors.js';
 import { zValidator } from '../validate.js';
 
 export function taskRoutes(core: Core) {
@@ -30,9 +31,26 @@ export function taskRoutes(core: Core) {
     return c.json(task);
   });
 
-  /** Free-form instruction to the agent (see TaskService.chat). */
-  app.post('/:id/chat', zValidator('json', chatMessageSchema), async (c) => {
-    return c.json(await core.tasks.chat(c.req.param('id'), c.req.valid('json').message));
+  /**
+   * Free-form instruction to the agent (see TaskService.chat). Accepts JSON
+   * `{ message }` or multipart form data with a `message` field and one or more
+   * `files` (png/jpeg/gif/webp, ≤10 MB each) that the agent can look at.
+   */
+  app.post('/:id/chat', async (c) => {
+    const contentType = c.req.header('content-type') ?? '';
+    if (contentType.includes('multipart/form-data')) {
+      const body = await c.req.parseBody({ all: true });
+      const message = typeof body.message === 'string' ? body.message : '';
+      const raw = body.files ?? body['files[]'];
+      const list = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter((f): f is File => f instanceof File);
+      const files: UploadedFile[] = await Promise.all(
+        list.map(async (f) => ({ name: f.name, mime: f.type, data: new Uint8Array(await f.arrayBuffer()) })),
+      );
+      return c.json(await core.tasks.chat(c.req.param('id'), message, files));
+    }
+    const parsed = chatMessageSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json(errorBody('VALIDATION', 'invalid request', parsed.error.issues), 400);
+    return c.json(await core.tasks.chat(c.req.param('id'), parsed.data.message));
   });
 
   app.post('/:id/clone', async (c) => c.json(await core.tasks.clone(c.req.param('id')), 201));

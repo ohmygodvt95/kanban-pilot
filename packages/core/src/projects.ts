@@ -32,6 +32,7 @@ export interface CreateProjectInput {
   execute_prompt?: string | null;
   followup_prompt?: string | null;
   done_action?: Project['done_action'];
+  auto_start?: boolean;
   /** Adopt setup/test scripts found in the repo's .agent-kanban.json. */
   accept_repo_scripts?: boolean;
 }
@@ -99,14 +100,18 @@ export class ProjectService {
       execute_prompt: input.execute_prompt ?? null,
       followup_prompt: input.followup_prompt ?? null,
       done_action: input.done_action ?? 'merge',
+      auto_start: input.auto_start ?? false,
     });
   }
 
   async update(id: string, input: UpdateProjectInput): Promise<Project> {
-    await this.ctx.store.getProject(id);
+    const before = await this.ctx.store.getProject(id);
     const patch: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(input)) if (v !== undefined) patch[k] = v;
-    return this.ctx.store.updateProject(id, patch);
+    const updated = await this.ctx.store.updateProject(id, patch);
+    // Switching auto_start on starts everything already waiting in TODO.
+    if (updated.auto_start && !before.auto_start) await this.tasks().autoStartPending(id);
+    return updated;
   }
 
   async delete(id: string): Promise<void> {

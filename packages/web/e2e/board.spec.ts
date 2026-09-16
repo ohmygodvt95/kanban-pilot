@@ -51,8 +51,20 @@ test.describe
       await drawer.getByRole('button', { name: 'Chat' }).click();
       const composer = drawer.getByPlaceholder(/Also handle the empty-list case/);
       await composer.fill('please also add a note');
+      // attach a 1x1 png through the hidden file input; the composer shows a preview
+      await drawer.locator('input[type=file]').setInputFiles({
+        name: 'mock.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+          'base64',
+        ),
+      });
+      await expect(drawer.getByAltText('mock.png')).toBeVisible();
       await drawer.getByRole('button', { name: 'Send & re-run' }).click();
       await expect(drawer.getByText('please also add a note')).toBeVisible();
+      // the sent bubble shows the attachment served by the API
+      await expect(drawer.locator('img[src^="/api/attachments/"]').first()).toBeVisible();
       await expect(drawer.getByText('agent · followup')).toBeVisible({ timeout: 30_000 });
       await expect(drawer.getByText('Review', { exact: true })).toBeVisible({ timeout: 30_000 });
 

@@ -65,6 +65,7 @@ const toForm = (p: Project): Form => ({
   execute_prompt: p.execute_prompt ?? '',
   followup_prompt: p.followup_prompt ?? '',
   done_action: p.done_action,
+  auto_start: p.auto_start,
 });
 
 const orNull = (v: string) => (v.trim() ? v : null);

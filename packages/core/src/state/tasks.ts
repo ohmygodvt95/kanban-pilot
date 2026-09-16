@@ -4,7 +4,18 @@
  * persists and emits. Everything else here (chat, restart, update-from-base…)
  * ends up calling `transition()` rather than touching columns directly.
  */
-import type { Attempt, Column, Comment, Project, Run, Task, TaskDetail } from '@agent-kanban/shared';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type {
+  Attachment,
+  Attempt,
+  Column,
+  Comment,
+  Project,
+  Run,
+  Task,
+  TaskDetail,
+} from '@agent-kanban/shared';
 import type { AttemptService } from '../attempts/attempts.js';
 import type { CoreContext } from '../context.js';
 import { getExecutor } from '../executors/registry.js';
@@ -24,7 +35,31 @@ import type { RefinementService } from '../refinement/refinement.js';
 import type { JobRunner } from '../runner/runner.js';
 import type { RunService, RunTestsJobPayload } from '../runs/runs.js';
 import { CoreError, errorMessage } from '../util/errors.js';
+import { newId } from '../util/ids.js';
 import { type Actor, type Decision, decide, type TransitionPayload } from './machine.js';
+
+/** An image uploaded with a chat message. */
+export interface UploadedFile {
+  name: string;
+  mime: string;
+  data: Uint8Array;
+}
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const IMAGE_MIME = /^image\/(png|jpeg|gif|webp)$/;
+
+/** Safe on-disk name: keep the extension, drop anything odd. */
+export function safeFileName(name: string): string {
+  return name.replace(/[^\w.-]+/g, '_').slice(-80) || 'image';
+}
+
+/** Absolute path of an attachment's bytes (shared with the runner). */
+export function attachmentFilePath(
+  attachmentsRoot: string,
+  a: Pick<Attachment, 'id' | 'comment_id' | 'name'>,
+): string {
+  return join(attachmentsRoot, a.comment_id, `${a.id}-${safeFileName(a.name)}`);
+}
 
 /** Task columns that may be written by services (computed fields excluded). */
 type TaskPatch = Omit<Task, 'total_cost_usd' | 'unconsumed_feedback'>;
@@ -212,14 +247,77 @@ export class TaskService {
     const adapter = getExecutor(this.ctx.executors, attempt.executor);
     const lastSession = adapter.supportsResume ? await this.store.lastSessionRun(attempt.id) : null;
     const prompt = lastSession
-      ? buildFollowupPrompt(ctx, feedback)
+      ? buildFollowupPrompt(ctx, feedback, this.attachmentPath)
       : buildFollowupPromptWithoutResume(
           ctx,
           task,
           (await this.deps.attempts.diff(attempt, project)).patch,
           feedback,
+          this.attachmentPath,
         );
     return { prompt, resumeSessionId: lastSession?.session_id ?? null };
+  }
+
+  /** Absolute path of an attachment's bytes. */
+  readonly attachmentPath = (a: Attachment): string => attachmentFilePath(this.ctx.paths.attachmentsRoot, a);
+
+  /** Persist uploaded images for a comment; returns the attachment records. */
+  private async storeAttachments(
+    taskId: string,
+    commentId: string,
+    files: UploadedFile[],
+  ): Promise<Attachment[]> {
+    const out: Attachment[] = [];
+    for (const f of files) {
+      if (!IMAGE_MIME.test(f.mime)) {
+        throw new CoreError(
+          'VALIDATION',
+          `unsupported attachment type ${f.mime} (png, jpeg, gif, webp only)`,
+        );
+      }
+      if (f.data.byteLength > MAX_ATTACHMENT_BYTES)
+        throw new CoreError('VALIDATION', `${f.name} is larger than 10 MB`);
+      const att = await this.ctx.store.insertAttachment({
+        id: newId(),
+        comment_id: commentId,
+        task_id: taskId,
+        name: f.name,
+        mime: f.mime,
+        size: f.data.byteLength,
+      });
+      const path = this.attachmentPath(att);
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, f.data);
+      out.push(att);
+    }
+    return out;
+  }
+
+  /**
+   * Start a TODO task automatically when the project asks for it. Concurrency is
+   * enforced by the runner (the task sits in DOING(queued) until a slot frees up).
+   */
+  private async maybeAutoStart(task: Task): Promise<Task> {
+    if (task.column !== 'todo') return task;
+    const project = await this.store.getProject(task.project_id);
+    if (!project.auto_start) return task;
+    try {
+      return await this.transition(task.id, 'doing', 'system', { auto_start: true });
+    } catch (err) {
+      this.ctx.logger.warn({ task: task.id, err: errorMessage(err) }, 'auto-start failed');
+      return this.store.updateTask(task.id, { last_error: `auto-start failed: ${errorMessage(err)}` });
+    }
+  }
+
+  /** Start every TODO task of a project (used when auto_start is switched on). */
+  async autoStartPending(projectId: string): Promise<number> {
+    let started = 0;
+    for (const task of await this.store.listTasks(projectId)) {
+      if (task.column !== 'todo') continue;
+      const after = await this.maybeAutoStart(task);
+      if (after.column === 'doing') started++;
+    }
+    return started;
   }
 
   // ---------------------------------------------------------------------------
@@ -252,7 +350,9 @@ export class TaskService {
       'transition',
     );
     const positionPatch = payload.position !== undefined ? { position: payload.position } : {};
-    return this.apply(task, project, activeAttempt, decision, payload, positionPatch);
+    const result = await this.apply(task, project, activeAttempt, decision, payload, positionPatch);
+    // A task that just became TODO(ready) may be started right away by the project.
+    return result.column === 'todo' && task.column !== 'todo' ? this.maybeAutoStart(result) : result;
   }
 
   private async apply(
@@ -336,13 +436,14 @@ export class TaskService {
           .find((r) => r.attempt_id === activeAttempt.id);
         const feedback = await this.store.unconsumedFeedback(task.id);
         const prompt = lastSession
-          ? buildRetryPrompt(ctx, lastRun?.error_message ?? task.last_error, feedback)
+          ? buildRetryPrompt(ctx, lastRun?.error_message ?? task.last_error, feedback, this.attachmentPath)
           : buildExecutePrompt(ctx, {
               task,
               worktreePath: activeAttempt.worktree_path,
               repoPath: project.repo_path,
               resumingRefinement: false,
               previousFeedback: feedback.length ? feedback : undefined,
+              attachmentPath: this.attachmentPath,
             });
         const run = await this.deps.runs.create({
           task,
@@ -417,6 +518,7 @@ export class TaskService {
       repoPath: project.repo_path,
       resumingRefinement: resumeRefinement,
       previousFeedback: opts.previousFeedback,
+      attachmentPath: this.attachmentPath,
     });
     try {
       await this.deps.runs.create({
@@ -445,10 +547,20 @@ export class TaskService {
    *  - DOING(queued|running): queued; the post-run pipeline sends it as soon as the run ends.
    *  - BACKLOG / TODO: chats with the planner (read-only refine session) and may update the plan.
    */
-  async chat(taskId: string, message: string): Promise<Task> {
+  async chat(taskId: string, message: string, files: UploadedFile[] = []): Promise<Task> {
     const task = await this.store.getTask(taskId);
     const body = message.trim();
-    if (!body) throw new CoreError('VALIDATION', 'message is empty');
+    if (!body && files.length === 0) throw new CoreError('VALIDATION', 'message is empty');
+    const insert = async (attemptId: string | null) => {
+      const comment = await this.store.insertComment({
+        task_id: task.id,
+        attempt_id: attemptId,
+        kind: 'chat',
+        body: body || '(image)',
+      });
+      const stored = await this.storeAttachments(task.id, comment.id, files);
+      return { ...comment, attachments: stored };
+    };
     if (task.column === 'done')
       throw new CoreError('INVALID_TRANSITION', 'DONE tasks are immutable; clone the task to continue');
     const project = await this.store.getProject(task.project_id);
@@ -456,13 +568,8 @@ export class TaskService {
     if (task.column === 'doing' && task.substate !== 'error') {
       // Agent busy in the worktree → queue; delivered by PostRunPipeline once the run finishes.
       if (!(await this.activeAttempt(task))) throw new CoreError('CONFLICT', 'task has no active attempt');
-      await this.store.insertComment({
-        task_id: task.id,
-        attempt_id: task.current_attempt_id,
-        kind: 'chat',
-        body,
-      });
-      return this.store.getTask(taskId);
+      await insert(task.current_attempt_id);
+      return this.store.touchTask(taskId);
     }
     if (await this.hasActiveRun(taskId)) {
       throw new CoreError('CONFLICT', 'the planner is still answering; wait for it to finish');
@@ -470,12 +577,7 @@ export class TaskService {
 
     if (task.column === 'review' || (task.column === 'doing' && task.substate === 'error')) {
       if (!(await this.activeAttempt(task))) throw new CoreError('CONFLICT', 'task has no active attempt');
-      await this.store.insertComment({
-        task_id: task.id,
-        attempt_id: task.current_attempt_id,
-        kind: 'chat',
-        body,
-      });
+      await insert(task.current_attempt_id);
       return task.column === 'review'
         ? this.transition(taskId, 'doing', 'user')
         : this.transition(taskId, 'doing', 'user', { action: 'retry' });
@@ -483,17 +585,13 @@ export class TaskService {
 
     // backlog / todo → planner chat
     const adapter = this.executorFor(task, project);
-    const comment = await this.store.insertComment({
-      task_id: task.id,
-      attempt_id: null,
-      kind: 'chat',
-      body,
-    });
+    const comment = await insert(null);
     const qa = await this.store.listQuestions(task.id);
     const resume = adapter.supportsResume && !!task.refinement_session_id;
     const prompt = buildPlannerChatPrompt(promptContext(project), task, body, qa, {
       structuredOutputSupported: adapter.supportsStructuredOutput,
       resuming: resume,
+      attachments: comment.attachments.map(this.attachmentPath),
     });
     const run = await this.deps.runs.create({
       task,
@@ -668,7 +766,7 @@ export class TaskService {
         if (attempt?.status !== 'active') return false;
         const diff = (await this.deps.attempts.diff(attempt, project)).patch;
         const prompt = comments.length
-          ? buildFollowupPromptWithoutResume(ctx, task, diff, comments)
+          ? buildFollowupPromptWithoutResume(ctx, task, diff, comments, this.attachmentPath)
           : buildExecutePrompt(ctx, {
               task,
               worktreePath: attempt.worktree_path,
@@ -713,6 +811,7 @@ export class TaskService {
         const prompt = buildPlannerChatPrompt(ctx, task, message, await this.store.listQuestions(task.id), {
           structuredOutputSupported: adapter.supportsStructuredOutput,
           resuming: false,
+          attachments: comments.flatMap((c) => c.attachments).map(this.attachmentPath),
         });
         const run = await this.deps.runs.create({
           task,

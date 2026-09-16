@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   Attempt,
   Column,
   Comment,
@@ -14,6 +15,7 @@ import type {
 import { and, asc, count, desc, eq, gt, inArray, isNull, lte, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import {
+  attachments,
   attempts,
   comments,
   jobs,
@@ -401,37 +403,72 @@ export class Store {
 
   // ---- comments -------------------------------------------------------------
   async listComments(taskId: string): Promise<Comment[]> {
-    return await this.db
+    return this.withAttachments(
+      await this.db
+        .select()
+        .from(comments)
+        .where(eq(comments.task_id, taskId))
+        .orderBy(asc(comments.created_at)),
+    );
+  }
+
+  /** Attach the `attachments` array to raw comment rows. */
+  private async withAttachments(rows: (typeof comments.$inferSelect)[]): Promise<Comment[]> {
+    if (rows.length === 0) return [];
+    const files = await this.db
       .select()
-      .from(comments)
-      .where(eq(comments.task_id, taskId))
-      .orderBy(asc(comments.created_at));
+      .from(attachments)
+      .where(
+        inArray(
+          attachments.comment_id,
+          rows.map((r) => r.id),
+        ),
+      )
+      .orderBy(asc(attachments.created_at));
+    const byComment = new Map<string, Attachment[]>();
+    for (const f of files) byComment.set(f.comment_id, [...(byComment.get(f.comment_id) ?? []), f]);
+    return rows.map((r) => ({ ...r, attachments: byComment.get(r.id) ?? [] }));
   }
 
   async findComment(id: string): Promise<Comment | null> {
-    return (await this.db.query.comments.findFirst({ where: eq(comments.id, id) })) ?? null;
+    const row = await this.db.query.comments.findFirst({ where: eq(comments.id, id) });
+    return row ? ((await this.withAttachments([row]))[0] ?? null) : null;
+  }
+
+  async insertAttachment(values: Omit<typeof attachments.$inferInsert, 'created_at'>): Promise<Attachment> {
+    const row = { ...values, created_at: nowIso() };
+    await this.db.insert(attachments).values(row);
+    return row;
+  }
+
+  async findAttachment(id: string): Promise<Attachment | null> {
+    return (await this.db.query.attachments.findFirst({ where: eq(attachments.id, id) })) ?? null;
   }
 
   async unconsumedFeedback(taskId: string): Promise<Comment[]> {
-    return await this.db
-      .select()
-      .from(comments)
-      .where(
-        and(
-          eq(comments.task_id, taskId),
-          inArray(comments.kind, ['feedback', 'chat']),
-          isNull(comments.consumed_by_run_id),
-        ),
-      )
-      .orderBy(asc(comments.created_at));
+    return this.withAttachments(
+      await this.db
+        .select()
+        .from(comments)
+        .where(
+          and(
+            eq(comments.task_id, taskId),
+            inArray(comments.kind, ['feedback', 'chat']),
+            isNull(comments.consumed_by_run_id),
+          ),
+        )
+        .orderBy(asc(comments.created_at)),
+    );
   }
 
   async allFeedback(taskId: string): Promise<Comment[]> {
-    return await this.db
-      .select()
-      .from(comments)
-      .where(and(eq(comments.task_id, taskId), inArray(comments.kind, ['feedback', 'chat'])))
-      .orderBy(asc(comments.created_at));
+    return this.withAttachments(
+      await this.db
+        .select()
+        .from(comments)
+        .where(and(eq(comments.task_id, taskId), inArray(comments.kind, ['feedback', 'chat'])))
+        .orderBy(asc(comments.created_at)),
+    );
   }
 
   async insertComment(values: Omit<typeof comments.$inferInsert, 'id' | 'created_at'>): Promise<Comment> {
@@ -444,11 +481,13 @@ export class Store {
   }
 
   async commentsConsumedBy(runId: string): Promise<Comment[]> {
-    return await this.db
-      .select()
-      .from(comments)
-      .where(eq(comments.consumed_by_run_id, runId))
-      .orderBy(asc(comments.created_at));
+    return this.withAttachments(
+      await this.db
+        .select()
+        .from(comments)
+        .where(eq(comments.consumed_by_run_id, runId))
+        .orderBy(asc(comments.created_at)),
+    );
   }
 
   async markCommentsConsumed(ids: string[], runId: string): Promise<void> {
