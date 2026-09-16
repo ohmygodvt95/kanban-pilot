@@ -420,7 +420,7 @@ function NewTaskModal({
   );
 }
 
-/** Pick open issues from the provider (GitHub) and create Backlog tasks from them. */
+/** Pick issues from the linked tracker and create Backlog/To do tasks from them. */
 function ImportIssuesModal({
   projectId,
   projectRef,
@@ -433,6 +433,7 @@ function ImportIssuesModal({
   const qc = useQueryClient();
   const toast = useToast();
   const [query, setQuery] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const issues = useQuery({
     queryKey: ['issues', projectId, query],
@@ -443,7 +444,8 @@ function ImportIssuesModal({
     mutationFn: () => api.projects.importIssues(projectId, [...picked]),
     onSuccess: (created) => {
       void qc.invalidateQueries({ queryKey: keys.tasks(projectId) });
-      toast.push({ kind: 'success', text: `Imported ${created.length} issue(s) into Backlog` });
+      void qc.invalidateQueries({ queryKey: ['issues', projectId] });
+      toast.push({ kind: 'success', text: `Imported ${created.length} issue(s)` });
       onClose();
     },
     onError: (err) => toast.error(err, 'Import failed'),
@@ -455,6 +457,11 @@ function ImportIssuesModal({
       else next.add(id);
       return next;
     });
+  // Already-imported issues and those whose status maps to Done are noise; hide them unless asked.
+  const all = issues.data ?? [];
+  const importable = all.filter((i) => !i.imported && i.column !== 'skip');
+  const hidden = all.length - importable.length;
+  const visible = showAll ? all : importable;
   return (
     <Modal
       title={`Import issues from ${projectRef}`}
@@ -475,41 +482,77 @@ function ImportIssuesModal({
         </>
       }
     >
-      <input
-        className={`${inputClass} mb-3`}
-        placeholder="Filter open issues…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
+      <div className="mb-3 flex items-center gap-3">
+        <input
+          className={`${inputClass} flex-1`}
+          placeholder="Filter issues…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {hidden > 0 ? (
+          <Switch
+            checked={showAll}
+            onChange={setShowAll}
+            label={<span className="text-xs">show {hidden} imported / done</span>}
+          />
+        ) : null}
+      </div>
+      <p className="mb-2 text-xs text-zinc-500">
+        Issues matching the integration filter are also imported automatically every poll. Status → column
+        comes from the status map; "done" statuses are never imported.
+      </p>
       {issues.isLoading ? <p className="text-zinc-500">Loading issues…</p> : null}
       {issues.isError ? <p className="text-red-600">{(issues.error as Error).message}</p> : null}
       <ul className="scrollbar-thin grid max-h-[50vh] gap-1 overflow-y-auto">
-        {issues.data?.map((i: ExternalIssue) => (
-          <li key={i.externalId}>
-            <label className="flex cursor-pointer items-start gap-2 rounded-md p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={picked.has(i.externalId)}
-                onChange={() => toggle(i.externalId)}
-              />
-              <span className="min-w-0">
-                <span className="font-medium">{i.title}</span>
-                <span className="ml-2 font-mono text-[11px] text-zinc-500">{i.externalId}</span>
-                {i.labels.length ? (
-                  <span className="ml-2 text-[11px] text-zinc-500">{i.labels.join(', ')}</span>
-                ) : null}
-                {i.kind || i.priority ? (
-                  <span className="ml-2 text-[11px] text-accent-600 dark:text-accent-300">
-                    → {i.kind ? KIND_LABELS[i.kind] : ''} {i.priority ? PRIORITY_LABELS[i.priority] : ''}
+        {visible.map((i: ExternalIssue) => {
+          const disabled = !!i.imported || i.column === 'skip';
+          return (
+            <li key={i.externalId}>
+              <label
+                className={`flex items-start gap-2 rounded-md p-2 ${disabled ? 'opacity-60' : 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  disabled={disabled}
+                  checked={picked.has(i.externalId)}
+                  onChange={() => toggle(i.externalId)}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{i.title}</span>
+                  <span className="ml-2 font-mono text-[11px] text-zinc-500">{i.externalId}</span>
+                  <span className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-zinc-500">
+                    {i.status ? (
+                      <span>
+                        {i.status} →{' '}
+                        {i.column === 'skip' ? (
+                          <span className="text-zinc-400">not imported (done)</span>
+                        ) : (
+                          <span className="text-accent-600 dark:text-accent-300">
+                            {i.column ?? 'backlog'}
+                          </span>
+                        )}
+                      </span>
+                    ) : null}
+                    {i.imported ? <span className="text-emerald-600">already imported</span> : null}
+                    {i.labels.length ? <span>{i.labels.join(', ')}</span> : null}
+                    {i.kind || i.priority ? (
+                      <span>
+                        {i.kind ? KIND_LABELS[i.kind] : ''} {i.priority ? PRIORITY_LABELS[i.priority] : ''}
+                      </span>
+                    ) : null}
                   </span>
-                ) : null}
-                <span className="line-clamp-2 block text-xs text-zinc-500">{i.body}</span>
-              </span>
-            </label>
+                  <span className="line-clamp-2 block text-xs text-zinc-500">{i.body}</span>
+                </span>
+              </label>
+            </li>
+          );
+        })}
+        {visible.length === 0 && !issues.isLoading ? (
+          <li className="p-2 text-zinc-500">
+            {hidden ? 'Everything importable is already a task.' : 'No issues match.'}
           </li>
-        ))}
-        {issues.data?.length === 0 ? <li className="p-2 text-zinc-500">No open issues match.</li> : null}
+        ) : null}
       </ul>
     </Modal>
   );

@@ -230,6 +230,11 @@ export const externalIssueSchema = z.object({
   /** Guessed from labels (e.g. "bug", "priority::high"); null when unknown. */
   kind: taskKindSchema.nullable().optional(),
   priority: taskPrioritySchema.nullable().optional(),
+  /** Remote status name (workflow status or matching label). */
+  status: z.string().nullable().optional(),
+  /** Set by GET /projects/:id/issues: already a task, and where the status map would put it. */
+  imported: z.boolean().optional(),
+  column: z.union([columnSchema, z.literal('skip')]).optional(),
 });
 export type ExternalIssue = z.infer<typeof externalIssueSchema>;
 
