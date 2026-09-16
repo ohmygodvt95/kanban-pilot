@@ -1,7 +1,7 @@
 import type { Column, ExecutorId, ExternalIssue, Task, TaskKind, TaskPriority } from '@agent-kanban/shared';
 import { EXECUTOR_IDS, TASK_KINDS, TASK_PRIORITIES } from '@agent-kanban/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { Download, HelpCircle, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
@@ -10,10 +10,12 @@ import { useProjectEvents } from '../api/sse';
 import { Board } from '../components/board/Board';
 import { TaskDrawer } from '../components/drawer/TaskDrawer';
 import { Shell } from '../components/Shell';
+import { TOUR_LABELS, Tour } from '../components/Tour';
 import { Button, DangerConfirm, Field, IconButton, inputClass, Modal, Switch } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { EXECUTOR_LABELS } from '../lib/state';
 import { KIND_LABELS, PRIORITY_LABELS } from '../lib/taskmeta';
+import { markTourSeen, tourLanguage, tourSeen, tourSteps } from '../lib/tour';
 
 /** Quick filters shown next to the search box. */
 type Quick = 'all' | 'attention' | 'running' | 'bugs' | 'urgent';
@@ -151,6 +153,15 @@ export function BoardPage() {
     : null;
 
   const [showFilters, setShowFilters] = useState(false);
+  // First visit: guided tour once the board has rendered; replayable from the ⋯ menu.
+  const [tour, setTour] = useState(false);
+  useEffect(() => {
+    if (tasks.data && !tourSeen('board')) setTour(true);
+  }, [tasks.data]);
+  const closeTour = () => {
+    markTourSeen('board');
+    setTour(false);
+  };
   const searchBox = (
     <>
       <Search size={13} className="pointer-events-none absolute top-2.5 left-2 text-zinc-400" />
@@ -209,12 +220,15 @@ export function BoardPage() {
       live={sse}
       center={
         <>
-          <div className="relative hidden min-w-44 max-w-xs flex-1 sm:block">{searchBox}</div>
+          <div className="relative hidden min-w-44 max-w-xs flex-1 sm:block" data-tour="search">
+            {searchBox}
+          </div>
           {/* filters live in a second row, revealed by this toggle (or automatically while active) */}
           <IconButton
             label={showFilters ? 'Hide filters' : 'Filters'}
             className={`relative ${showFilters ? 'bg-zinc-200/70 dark:bg-zinc-700' : ''}`}
             onClick={() => setShowFilters((v) => !v)}
+            data-tour="filters"
           >
             <SlidersHorizontal size={16} />
             {filtering ? (
@@ -314,6 +328,9 @@ export function BoardPage() {
           projectRef={provider.data.projectRef}
           onClose={() => setImporting(false)}
         />
+      ) : null}
+      {tour && tasks.data ? (
+        <Tour steps={tourSteps('board')} labels={TOUR_LABELS[tourLanguage()]} onClose={closeTour} />
       ) : null}
       {selected && project.data ? (
         <TaskDrawer taskId={selected} project={project.data} onClose={() => open(null)} />

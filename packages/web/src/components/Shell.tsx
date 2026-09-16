@@ -156,7 +156,9 @@ export function Shell({
           ) : null}
 
           {center ? (
-            <div className="flex min-w-0 flex-1 items-center gap-2">{center}</div>
+            <div className="flex min-w-0 flex-1 items-center gap-2" data-tour="center">
+              {center}
+            </div>
           ) : (
             <span className="flex-1" />
           )}
@@ -181,7 +183,7 @@ export function Shell({
           ))}
 
           {/* nav icons from md up */}
-          <div className="hidden shrink-0 items-center md:flex">
+          <div className="hidden shrink-0 items-center md:flex" data-tour="nav">
             {notifyItem ? (
               <IconButton
                 label={
@@ -207,7 +209,7 @@ export function Shell({
             <Popover
               className="shrink-0"
               button={({ toggle }) => (
-                <IconButton label="More" onClick={toggle}>
+                <IconButton label="More" onClick={toggle} data-tour="menu">
                   <MoreVertical size={16} />
                 </IconButton>
               )}

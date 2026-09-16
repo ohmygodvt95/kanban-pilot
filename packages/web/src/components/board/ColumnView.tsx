@@ -54,7 +54,10 @@ export function ColumnView({
     );
   }
   return (
-    <div className="flex w-72 shrink-0 flex-col rounded-xl bg-zinc-200/50 dark:bg-zinc-900/70 xl:w-auto xl:flex-1">
+    <div
+      className="flex w-72 shrink-0 flex-col rounded-xl bg-zinc-200/50 dark:bg-zinc-900/70 xl:w-auto xl:flex-1"
+      data-tour={`column-${column}`}
+    >
       <div className="flex items-center gap-2 px-3 pt-3 pb-2" title={COLUMN_HINTS[column]}>
         <span className={`h-2 w-2 rounded-full ${COLUMN_DOT[column]}`} />
         <h2 className="font-semibold text-sm text-zinc-700 dark:text-zinc-200">{COLUMN_LABELS[column]}</h2>

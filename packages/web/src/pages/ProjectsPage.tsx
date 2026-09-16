@@ -1,19 +1,30 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { FolderGit2, Plus, Settings } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError, api } from '../api/client';
 import { keys, useExecutors, useProjects } from '../api/queries';
 import { Shell } from '../components/Shell';
+import { TOUR_LABELS, Tour } from '../components/Tour';
 import { Button, Card, EmptyState, Field, inputClass, Modal } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { EXECUTOR_LABELS } from '../lib/state';
+import { markTourSeen, tourLanguage, tourSeen, tourSteps } from '../lib/tour';
 
 export function ProjectsPage() {
   const projects = useProjects();
   const qc = useQueryClient();
   const toast = useToast();
   const [repoPath, setRepoPath] = useState('');
+  // Welcome tour on the very first visit (no projects yet).
+  const [tour, setTour] = useState(false);
+  useEffect(() => {
+    if (projects.data?.length === 0 && !tourSeen('projects')) setTour(true);
+  }, [projects.data]);
+  const closeTour = () => {
+    markTourSeen('projects');
+    setTour(false);
+  };
   const [name, setName] = useState('');
   /** Scripts found in the repo's .agent-kanban.json awaiting the user's confirmation. */
   const [pendingScripts, setPendingScripts] = useState<{
@@ -79,6 +90,9 @@ export function ProjectsPage() {
           </dl>
         </Modal>
       ) : null}
+      {tour ? (
+        <Tour steps={tourSteps('projects')} labels={TOUR_LABELS[tourLanguage()]} onClose={closeTour} />
+      ) : null}
       <div className="mx-auto max-w-5xl p-6">
         <div className="mb-6">
           <h1 className="font-semibold text-2xl tracking-tight">Projects</h1>
@@ -142,7 +156,7 @@ export function ProjectsPage() {
             ))}
           </div>
 
-          <Card title="Add project">
+          <Card title="Add project" data-tour="add-project">
             <form
               className="grid gap-3"
               onSubmit={(e) => {

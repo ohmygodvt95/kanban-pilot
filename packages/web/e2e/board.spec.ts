@@ -17,12 +17,22 @@ test.describe
     test('adds a project and walks a task from Backlog to Done', async ({ page }) => {
       await page.goto('/');
       await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
+      // first visit: the welcome tour shows and can be skipped
+      const tour = page.getByRole('dialog', { name: 'Welcome to Agent Kanban' });
+      await expect(tour).toBeVisible();
+      await tour.getByRole('button', { name: 'Skip' }).click();
+      await expect(tour).toBeHidden();
       await page.getByPlaceholder('/home/me/code/my-app').fill(state().repo);
       await page.getByPlaceholder('my-app', { exact: true }).fill('E2E project');
       await page.getByRole('button', { name: 'Add project' }).click();
       await expect(page.getByText('Project added')).toBeVisible();
       await page.getByRole('button', { name: 'Open board' }).click();
       await expect(page.getByRole('heading', { name: 'Backlog' })).toBeVisible();
+      // the board tour walks through every step, then never comes back
+      await expect(page.getByRole('dialog', { name: 'Welcome to Agent Kanban' })).toBeVisible();
+      for (let i = 0; i < 9; i++) await page.getByRole('button', { name: 'Next' }).click();
+      await page.getByRole('button', { name: 'Done', exact: true }).click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
 
       // new task via the keyboard shortcut
       await page.locator('main').click({ position: { x: 5, y: 5 } });
@@ -95,6 +105,8 @@ test.describe
           body: JSON.stringify({ title: 'Drag me', description: 'x' }),
         })
       ).json()) as { id: string };
+      // fresh browser context: mark the tour as seen so it does not cover the board
+      await page.addInitScript(() => localStorage.setItem('agent-kanban.tour.board', '1'));
       await page.goto(`/p/${projectId}`);
       const card = page.getByText('Drag me').first();
       const review = page.getByRole('heading', { name: 'Review' });
