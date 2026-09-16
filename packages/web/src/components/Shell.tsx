@@ -1,11 +1,9 @@
 /**
- * App frame: a single-row header that adapts to the viewport. Wide screens show
- * everything inline; as space shrinks the secondary actions, then the navigation
- * icons and status, fold into one overflow menu so the row never wraps.
+ * App frame: a single-row header that stays uncluttered at every width. Secondary
+ * actions (import, clear…) always live in the ⋯ menu; the navigation icons and
+ * the live/stats badges join that menu on small screens, so the row never wraps.
  *
- *   ≥ 2xl: logo · project · center · info · actions · nav icons
- *   ≥ xl : logo · project · center · filters · primary · nav icons · [⋯ actions]
- *   ≥ md : logo · project · center · primary · nav icons · [⋯ actions]
+ *   ≥ md : logo · project · center · stats · primary · nav icons · [⋯ actions]
  *   < md : logo · project · center · primary · [⋯ actions + nav + status]
  */
 import {
@@ -164,28 +162,9 @@ export function Shell({
           )}
 
           {info ? (
-            <span className="hidden shrink-0 text-[11px] text-zinc-500 2xl:inline-flex">{info}</span>
+            <span className="hidden shrink-0 text-[11px] text-zinc-500 xl:inline-flex">{info}</span>
           ) : null}
           {liveBadge ? <span className="hidden shrink-0 md:inline-flex">{liveBadge}</span> : null}
-
-          {/* secondary actions inline on wide screens only */}
-          {secondary.length ? (
-            <div className="hidden shrink-0 items-center gap-2 2xl:flex">
-              {secondary.map((a) => (
-                <Button
-                  key={a.label}
-                  size="sm"
-                  variant="ghost"
-                  icon={<span className="[&>svg]:h-3.5 [&>svg]:w-3.5">{a.icon}</span>}
-                  title={a.title}
-                  disabled={a.disabled}
-                  onClick={a.onClick}
-                >
-                  {a.label}
-                </Button>
-              ))}
-            </div>
-          ) : null}
           {primary.map((a) => (
             <Button
               key={a.label}
@@ -223,10 +202,10 @@ export function Shell({
             ))}
           </div>
 
-          {/* overflow menu: actions below lg, plus nav/status below md */}
+          {/* overflow menu: always holds the secondary actions; nav/status join it below md */}
           {hasMenu ? (
             <Popover
-              className="shrink-0 2xl:hidden"
+              className="shrink-0"
               button={({ toggle }) => (
                 <IconButton label="More" onClick={toggle}>
                   <MoreVertical size={16} />

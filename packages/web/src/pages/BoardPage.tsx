@@ -210,11 +210,10 @@ export function BoardPage() {
       center={
         <>
           <div className="relative hidden min-w-44 max-w-xs flex-1 sm:block">{searchBox}</div>
-          {/* inline filter chips on wide screens; a toggle revealing the filter row otherwise */}
-          <div className="hidden items-center gap-1 xl:flex">{filterControls}</div>
+          {/* filters live in a second row, revealed by this toggle (or automatically while active) */}
           <IconButton
             label={showFilters ? 'Hide filters' : 'Filters'}
-            className={`relative xl:hidden ${showFilters ? 'bg-zinc-200/70 dark:bg-zinc-700' : ''}`}
+            className={`relative ${showFilters ? 'bg-zinc-200/70 dark:bg-zinc-700' : ''}`}
             onClick={() => setShowFilters((v) => !v)}
           >
             <SlidersHorizontal size={16} />
@@ -226,7 +225,7 @@ export function BoardPage() {
       }
       subheader={
         showFilters || (filtering && !query) ? (
-          <div className="flex items-center gap-2 xl:hidden">
+          <div className="flex items-center gap-2">
             <div className="relative w-56 shrink-0 sm:hidden">{searchBox}</div>
             {filterControls}
           </div>
