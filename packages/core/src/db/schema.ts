@@ -89,6 +89,7 @@ export const runs = sqliteTable(
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
     kind: text('kind').$type<RunKind>().notNull(),
+    executor: text('executor').$type<ExecutorId>().notNull(),
     prompt: text('prompt').notNull(),
     command: text('command'),
     status: text('status').$type<RunStatus>().notNull().default('queued'),

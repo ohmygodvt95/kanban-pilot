@@ -77,6 +77,7 @@ export const runSchema = z.object({
   attempt_id: nullableString,
   task_id: z.string(),
   kind: runKindSchema,
+  executor: executorIdSchema,
   prompt: z.string(),
   command: nullableString,
   status: runStatusSchema,

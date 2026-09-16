@@ -2,9 +2,9 @@
 export interface EmbeddedMigration { tag: string; when: number; hash: string; sql: string[] }
 export const MIGRATIONS: EmbeddedMigration[] = [
   {
-    "tag": "0000_broad_hercules",
-    "when": 1789529311087,
-    "hash": "4dce796e3fdbe975e0d041d1e0167c2086c9677c504dac3e09a6d7a3e0ef5aec",
+    "tag": "0000_lyrical_starfox",
+    "when": 1789530253232,
+    "hash": "3af11eb3c8d21a43ed6b01bb56748f913f6a233b4009d9fa7c40990eb5f836be",
     "sql": [
       "CREATE TABLE `attempts` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`task_id` text NOT NULL,\n\t`executor` text NOT NULL,\n\t`branch` text NOT NULL,\n\t`worktree_path` text NOT NULL,\n\t`base_commit` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`pr_url` text,\n\t`last_test_output` text,\n\t`last_test_ok` integer,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tFOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade\n);",
       "CREATE INDEX `attempts_task_idx` ON `attempts` (`task_id`);",
@@ -18,7 +18,7 @@ export const MIGRATIONS: EmbeddedMigration[] = [
       "CREATE INDEX `refinement_questions_task_idx` ON `refinement_questions` (`task_id`);",
       "CREATE TABLE `run_events` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`run_id` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`type` text NOT NULL,\n\t`payload` text NOT NULL,\n\t`created_at` text NOT NULL,\n\tFOREIGN KEY (`run_id`) REFERENCES `runs`(`id`) ON UPDATE no action ON DELETE cascade\n);",
       "CREATE UNIQUE INDEX `run_events_run_seq_idx` ON `run_events` (`run_id`,`seq`);",
-      "CREATE TABLE `runs` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`attempt_id` text,\n\t`task_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`prompt` text NOT NULL,\n\t`command` text,\n\t`status` text DEFAULT 'queued' NOT NULL,\n\t`exit_code` integer,\n\t`session_id` text,\n\t`resumed_from_session_id` text,\n\t`result_subtype` text,\n\t`structured_output` text,\n\t`cost_usd` real,\n\t`num_turns` integer,\n\t`error_message` text,\n\t`started_at` text,\n\t`finished_at` text,\n\t`created_at` text NOT NULL,\n\tFOREIGN KEY (`attempt_id`) REFERENCES `attempts`(`id`) ON UPDATE no action ON DELETE set null,\n\tFOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+      "CREATE TABLE `runs` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`attempt_id` text,\n\t`task_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`executor` text NOT NULL,\n\t`prompt` text NOT NULL,\n\t`command` text,\n\t`status` text DEFAULT 'queued' NOT NULL,\n\t`exit_code` integer,\n\t`session_id` text,\n\t`resumed_from_session_id` text,\n\t`result_subtype` text,\n\t`structured_output` text,\n\t`cost_usd` real,\n\t`num_turns` integer,\n\t`error_message` text,\n\t`started_at` text,\n\t`finished_at` text,\n\t`created_at` text NOT NULL,\n\tFOREIGN KEY (`attempt_id`) REFERENCES `attempts`(`id`) ON UPDATE no action ON DELETE set null,\n\tFOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade\n);",
       "CREATE INDEX `runs_task_idx` ON `runs` (`task_id`);",
       "CREATE INDEX `runs_attempt_idx` ON `runs` (`attempt_id`);",
       "CREATE TABLE `tasks` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`project_id` text NOT NULL,\n\t`title` text NOT NULL,\n\t`description` text DEFAULT '' NOT NULL,\n\t`column` text DEFAULT 'backlog' NOT NULL,\n\t`substate` text,\n\t`position` real DEFAULT 0 NOT NULL,\n\t`executor` text,\n\t`skip_refinement` integer DEFAULT false NOT NULL,\n\t`plan` text,\n\t`refinement_session_id` text,\n\t`refinement_incomplete` integer DEFAULT false NOT NULL,\n\t`current_attempt_id` text,\n\t`last_error` text,\n\t`source_provider` text,\n\t`source_external_id` text,\n\t`source_url` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tFOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade\n);",

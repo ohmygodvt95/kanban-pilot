@@ -92,6 +92,7 @@ CREATE TABLE `runs` (
 	`attempt_id` text,
 	`task_id` text NOT NULL,
 	`kind` text NOT NULL,
+	`executor` text NOT NULL,
 	`prompt` text NOT NULL,
 	`command` text,
 	`status` text DEFAULT 'queued' NOT NULL,

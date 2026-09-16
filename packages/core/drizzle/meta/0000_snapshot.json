@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "eb27a29e-d3f9-4cbf-a709-9096b9eceabb",
+  "id": "b40ccac4-e0ba-4d2f-9930-f83bc918643d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "attempts": {
@@ -650,6 +650,13 @@
         },
         "kind": {
           "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "executor": {
+          "name": "executor",
           "type": "text",
           "primaryKey": false,
           "notNull": true,

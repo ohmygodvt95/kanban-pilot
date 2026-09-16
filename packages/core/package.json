@@ -20,7 +20,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate && node --experimental-strip-types scripts/bundle-migrations.ts",
-    "smoke": "node --experimental-strip-types --conditions=@agent-kanban/source scripts/smoke.ts"
+    "smoke": "tsx --conditions=@agent-kanban/source scripts/smoke.ts"
   },
   "dependencies": {
     "@agent-kanban/shared": "workspace:*",
@@ -31,6 +31,7 @@
   },
   "devDependencies": {
     "@types/node": "22.20.3",
-    "drizzle-kit": "0.31.10"
+    "drizzle-kit": "0.31.10",
+    "tsx": "^4.23.13"
   }
 }

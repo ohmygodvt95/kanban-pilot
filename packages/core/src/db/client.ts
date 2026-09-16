@@ -55,7 +55,7 @@ export function openDatabase(path: string): DatabaseHandle {
         // Drizzle expects a single row (array of values) or undefined here.
         return { rows: row as unknown as unknown[] };
       }
-      return { rows: stmt.all(...bound) as unknown[][] };
+      return { rows: stmt.all(...bound) as unknown as unknown[][] };
     },
     { schema },
   );
