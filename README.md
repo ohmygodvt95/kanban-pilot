@@ -57,6 +57,9 @@ the main working tree of your repo is never touched by an agent.
 - **Update from base.** Merge the base branch into an attempt from Review; conflicts are handed to the agent as a
   followup and the merge is committed by the system.
 - **Queued chat.** Messages typed while the agent works are delivered as feedback right after the run ends.
+- **Browser access.** Project option (per-task override) that runs Claude Code with `--chrome`, so the agent can
+  drive your Chrome through the Claude in Chrome extension: open the dev server, click through the UI, read console
+  errors, and save screenshots into the worktree (rendered in the Chat tab).
 - **Auto-start.** Project option: every task that reaches To do starts immediately; `max_concurrent_runs` bounds the
   parallelism and the rest wait in Doing as *queued*. Turning it on also starts tasks already waiting in To do.
 - **Retention.** Event streams of DONE runs older than 30 days are pruned (`--retention-days`, 0 = never); run

@@ -17,6 +17,7 @@ Verified on **Claude Code 2.1.260** (`claude --help`, plus captured stream-json 
 | — | Resuming a refinement session (`plan` mode, cwd = repo) into an execute run (`bypassPermissions`, cwd = worktree) works, but the model remembers absolute paths of the main repo. The execute prompt therefore states the new worktree path and forbids touching the original repo path. |
 | — | Auth check: `claude auth status` is used when available; if it is missing the adapter only verifies the binary runs. |
 | — | `--model <alias>` and `--max-budget-usd <amount>` exist and are passed from project/task settings. `--effort` exists but is not exposed yet. |
+| — | `--chrome` / `--no-chrome` work in `-p` mode: the `claude-in-chrome` MCP server connects and the `mcp__claude-in-chrome__*` tools (navigate, computer, read_page, javascript_tool, …) are listed in the init event. Mapped to project `browser_enabled` / task `browser`; `false` passes `--no-chrome` so a user-level default cannot leak in. |
 | — | Images: there is no image flag in headless mode; the prompt lists attached files by absolute path and Claude opens them with its Read tool (which supports images). `--add-dir <dir>` is added per attachment directory so plan-mode runs may read outside the cwd. |
 | — | Resuming an unknown session: exit 1, stderr `No conversation found with session ID: …`, a `result` event with `subtype: error_during_execution`, `num_turns: 0`. `classifyFailure()` maps this to `session_not_found` → automatic retry without `--resume`. |
 

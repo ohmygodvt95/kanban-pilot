@@ -321,7 +321,7 @@ export function buildExecutePrompt(ctx: PromptContext, input: ExecutePromptInput
           repo: input.repoPath,
         })
       : '',
-    constraints: tpl.constraints,
+    constraints: constraints(ctx),
   });
 }
 
@@ -398,7 +398,7 @@ export function buildRetryPrompt(
     extra_feedback: extraFeedback.length
       ? `\n${extraHeading}\n${formatFeedbackList(extraFeedback, attachmentPath)}\n`
       : '',
-    constraints: tpl.constraints,
+    constraints: constraints(ctx),
   });
 }
 

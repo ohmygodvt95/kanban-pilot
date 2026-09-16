@@ -269,6 +269,34 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
                   ),
               },
               {
+                k: 'Browser',
+                v:
+                  busy || task.column === 'done' ? (
+                    (task.browser ?? project.browser_enabled) ? (
+                      'on (Claude in Chrome)'
+                    ) : (
+                      'off'
+                    )
+                  ) : (
+                    <select
+                      className="rounded border border-zinc-300 bg-transparent px-1 py-0.5 text-xs dark:border-zinc-600"
+                      value={task.browser === null ? '' : task.browser ? 'on' : 'off'}
+                      title="Let the agent use Chrome for this task (Claude in Chrome)"
+                      onChange={(e) =>
+                        run(() =>
+                          api.tasks.update(task.id, {
+                            browser: e.target.value === '' ? null : e.target.value === 'on',
+                          }),
+                        )
+                      }
+                    >
+                      <option value="">project default ({project.browser_enabled ? 'on' : 'off'})</option>
+                      <option value="on">on</option>
+                      <option value="off">off</option>
+                    </select>
+                  ),
+              },
+              {
                 k: 'Total cost',
                 v: `${formatCost(task.total_cost_usd) || '$0.00'}${project.max_budget_usd ? ` (cap ${formatCost(project.max_budget_usd)}/run)` : ''}`,
               },
