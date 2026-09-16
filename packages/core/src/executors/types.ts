@@ -22,8 +22,17 @@ export interface ExecutorInput {
   /** refine = read-only planning, execute = full permissions */
   mode: 'refine' | 'execute';
   resumeSessionId?: string;
-  /** JSON schema for structured output (refine mode). */
+  /** JSON schema for structured output (refine / chat runs). */
   outputSchema?: object;
+  /**
+   * Path of a file containing `outputSchema` as JSON, for CLIs that only accept a
+   * schema file (Codex `--output-schema <FILE>`). Provided by the runner when set.
+   */
+  outputSchemaFile?: string;
+  /** Model name/alias understood by the CLI (e.g. "sonnet", "o3"). */
+  model?: string;
+  /** Hard cost cap for the run in USD (Claude `--max-budget-usd`). */
+  maxBudgetUsd?: number;
   maxTurns?: number;
   systemPromptAppend?: string;
 }
@@ -46,6 +55,15 @@ export interface ExecutorAdapter {
   readonly supportsStructuredOutput: boolean;
   /** Instruction file names this tool reads from the repo root (e.g. CLAUDE.md). */
   readonly instructionFiles: string[];
+  /**
+   * Classify a failed run. `session_not_found` lets the runner retry once without
+   * `--resume` (see docs/executor-notes.md for the exact CLI messages).
+   */
+  classifyFailure?(info: {
+    exitCode: number | null;
+    stderr: string;
+    resultSubtype?: string;
+  }): 'session_not_found' | 'other';
 }
 
 /** Safely parse a JSON line; returns undefined for non-JSON. */

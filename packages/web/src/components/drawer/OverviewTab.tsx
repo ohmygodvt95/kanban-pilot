@@ -6,6 +6,9 @@ import {
   Check,
   Code2,
   Copy,
+  ExternalLink,
+  FlaskConical,
+  GitMerge,
   Pencil,
   Play,
   RefreshCw,
@@ -106,6 +109,8 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
 
       <Actions
         task={task}
+        project={project}
+        toast={toast}
         busy={busy}
         activeRunId={activeRun?.id}
         run={run}
@@ -245,7 +250,28 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
                   />
                 ),
               },
-              { k: 'Total cost', v: formatCost(task.total_cost_usd) || '$0.00' },
+              {
+                k: 'Model',
+                v:
+                  busy || task.column === 'done' ? (
+                    (task.model ?? project.model ?? 'CLI default')
+                  ) : (
+                    <input
+                      className="w-40 rounded border border-zinc-300 bg-transparent px-1 py-0.5 font-mono text-xs dark:border-zinc-600"
+                      defaultValue={task.model ?? ''}
+                      placeholder={project.model ?? 'CLI default'}
+                      title="Per-task model override (e.g. sonnet, opus). Blank = project default."
+                      onBlur={(e) => {
+                        const v = e.target.value.trim() || null;
+                        if (v !== task.model) run(() => api.tasks.update(task.id, { model: v }));
+                      }}
+                    />
+                  ),
+              },
+              {
+                k: 'Total cost',
+                v: `${formatCost(task.total_cost_usd) || '$0.00'}${project.max_budget_usd ? ` (cap ${formatCost(project.max_budget_usd)}/run)` : ''}`,
+              },
               {
                 k: 'Runs',
                 v: `${task.runs.length}${lastRun ? ` · last ${lastRun.kind} ${lastRun.status} ${formatTime(lastRun.finished_at ?? lastRun.created_at)}` : ''}`,
@@ -350,14 +376,17 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
 
 function Actions({
   task,
+  project,
   busy,
   activeRunId,
   run,
   transition,
   confirm,
   pending,
+  toast,
 }: {
   task: TaskDetail;
+  project: Project;
   busy: boolean;
   activeRunId?: string;
   run: (fn: () => Promise<unknown>) => void;
@@ -369,6 +398,7 @@ function Actions({
     confirmLabel?: string;
   }) => Promise<boolean>;
   pending: boolean;
+  toast: ReturnType<typeof useToast>;
 }) {
   const buttons: {
     label: string;
@@ -423,14 +453,39 @@ function Actions({
       onClick: () => run(transition('doing', { action: 'retry' })),
     });
   }
-  if (column === 'review')
+  if (column === 'review') {
     buttons.push({
-      label: 'Merge → Done',
+      label: project.done_action === 'pr' ? 'Open PR → Done' : 'Merge → Done',
       icon: <Check size={13} />,
       variant: 'primary',
       onClick: () => run(transition('done')),
     });
+  }
   if ((column === 'doing' && substate === 'error') || column === 'review') {
+    buttons.push({
+      label: `Update from ${project.base_branch}`,
+      icon: <GitMerge size={13} />,
+      title: 'Merge the base branch into this attempt; conflicts are handed to the agent',
+      onClick: () =>
+        run(async () => {
+          const res = await api.tasks.updateBase(task.id);
+          toast.push(
+            res.conflicts.length
+              ? {
+                  kind: 'info',
+                  text: `Conflicts in ${res.conflicts.join(', ')} — the agent is resolving them`,
+                }
+              : { kind: 'success', text: `Attempt is up to date with ${project.base_branch}` },
+          );
+        }),
+    });
+    if (project.test_script) {
+      buttons.push({
+        label: 'Run tests',
+        icon: <FlaskConical size={13} />,
+        onClick: () => run(() => api.tasks.runTests(task.id)),
+      });
+    }
     buttons.push({
       label: 'Restart attempt',
       icon: <RotateCcw size={13} />,

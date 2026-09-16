@@ -6,6 +6,7 @@ export const keys = {
   projects: ['projects'] as const,
   project: (id: string) => ['project', id] as const,
   executors: (id: string) => ['executors', id] as const,
+  provider: (id: string) => ['provider', id] as const,
   tasks: (projectId: string) => ['tasks', projectId] as const,
   task: (id: string) => ['task', id] as const,
   diff: (attemptId: string) => ['diff', attemptId] as const,
@@ -17,6 +18,8 @@ export const useProject = (id: string) =>
   useQuery({ queryKey: keys.project(id), queryFn: () => api.projects.get(id) });
 export const useExecutors = (id: string) =>
   useQuery({ queryKey: keys.executors(id), queryFn: () => api.projects.executors(id), staleTime: 60_000 });
+export const useProvider = (id: string) =>
+  useQuery({ queryKey: keys.provider(id), queryFn: () => api.projects.provider(id), staleTime: 60_000 });
 export const useTasks = (projectId: string) =>
   useQuery({ queryKey: keys.tasks(projectId), queryFn: () => api.projects.tasks(projectId) });
 export const useTask = (id: string | null) =>

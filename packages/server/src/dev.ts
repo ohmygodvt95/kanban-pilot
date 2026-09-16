@@ -13,6 +13,7 @@ const core = createCore({
   paths: {
     ...(process.env.AK_DB ? { dbPath: process.env.AK_DB } : {}),
     ...(process.env.AK_WORKTREES ? { worktreesRoot: process.env.AK_WORKTREES } : {}),
+    ...(process.env.AK_LOGS ? { logsRoot: process.env.AK_LOGS } : {}),
   },
 });
 await core.start();

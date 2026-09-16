@@ -6,7 +6,9 @@ import type {
   CreateTaskInput,
   DiffResult,
   ExecutorStatus,
+  ExternalIssue,
   Project,
+  ProviderStatus,
   Run,
   RunEvent,
   Task,
@@ -65,6 +67,12 @@ export const api = {
       request<Project>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     delete: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
     executors: (id: string) => request<ExecutorStatus[]>(`/projects/${id}/executors`),
+    /** Issue provider detected from the origin remote, or null. */
+    provider: (id: string) => request<ProviderStatus | null>(`/projects/${id}/provider`),
+    issues: (id: string, query?: string) =>
+      request<ExternalIssue[]>(`/projects/${id}/issues${query ? `?query=${encodeURIComponent(query)}` : ''}`),
+    importIssues: (id: string, externalIds: string[]) =>
+      request<Task[]>(`/projects/${id}/import-issues`, json({ external_ids: externalIds })),
     tasks: (id: string) => request<Task[]>(`/projects/${id}/tasks`),
     createTask: (id: string, input: CreateTaskInput) => request<Task>(`/projects/${id}/tasks`, json(input)),
   },
@@ -82,6 +90,10 @@ export const api = {
     answer: (id: string, qid: string, answer: string) =>
       request<Task>(`/tasks/${id}/questions/${qid}/answer`, json({ answer })),
     restart: (id: string) => request<Task>(`/tasks/${id}/attempts/restart`, { method: 'POST' }),
+    /** Merge the base branch into the attempt; conflicts go to the agent. */
+    updateBase: (id: string) =>
+      request<{ task: Task; conflicts: string[] }>(`/tasks/${id}/attempts/update-base`, { method: 'POST' }),
+    runTests: (id: string) => request<{ ok: true }>(`/tasks/${id}/tests/run`, { method: 'POST' }),
     discard: (id: string) => request<Task>(`/tasks/${id}/attempts/discard`, { method: 'POST' }),
   },
   comments: { delete: (id: string) => request<void>(`/comments/${id}`, { method: 'DELETE' }) },

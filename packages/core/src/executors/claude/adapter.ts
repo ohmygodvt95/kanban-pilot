@@ -53,9 +53,18 @@ export class ClaudeAdapter implements ExecutorAdapter {
       args.push('--permission-mode', 'bypassPermissions');
     }
     if (input.resumeSessionId) args.push('--resume', input.resumeSessionId);
+    if (input.model) args.push('--model', input.model);
+    if (input.maxBudgetUsd !== undefined) args.push('--max-budget-usd', String(input.maxBudgetUsd));
     // NOTE: `--max-turns` is not listed by `claude --help` on 2.1.x, so maxTurns is intentionally ignored here.
     if (input.systemPromptAppend) args.push('--append-system-prompt', input.systemPromptAppend);
     return { bin: this.bin, args, stdin: input.prompt, env: pickEnv() };
+  }
+
+  /** Claude prints "No conversation found with session ID: …" on stderr and exits 1. */
+  classifyFailure(info: { exitCode: number | null; stderr: string; resultSubtype?: string }) {
+    return /No conversation found with session ID/i.test(info.stderr)
+      ? ('session_not_found' as const)
+      : ('other' as const);
   }
 
   parseLine(line: string): NormalizedEvent | NormalizedEvent[] | null {

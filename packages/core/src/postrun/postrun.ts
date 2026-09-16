@@ -1,25 +1,25 @@
+/**
+ * Post-run pipeline (spec §10.3): verify diff → commit → tests → push → REVIEW
+ * (or DOING(error)). Refine and planner-chat runs are delegated to RefinementService.
+ * Messages queued in the Chat tab while the agent was running are sent right after.
+ */
 import type { Run } from '@agent-kanban/shared';
 import type { AttemptService } from '../attempts/attempts.js';
 import type { CoreContext } from '../context.js';
 import { commitAll, hasChanges, push } from '../git/git.js';
 import { commitMessage } from '../prompts/prompts.js';
 import type { RefinementService } from '../refinement/refinement.js';
-import { runScript } from '../runner/process.js';
+import type { JobRunner } from '../runner/runner.js';
 import type { TaskService } from '../state/tasks.js';
 import { errorMessage } from '../util/errors.js';
 
 export interface PostRunDeps {
   tasks: () => TaskService;
+  runner: () => JobRunner;
   attempts: AttemptService;
   refinement: RefinementService;
 }
 
-export const TEST_TIMEOUT_MS = 10 * 60_000;
-
-/**
- * Post-run pipeline (spec §10.3): verify diff, commit, run tests, push, and move
- * the task to REVIEW (or DOING(error)). Refine runs are delegated to RefinementService.
- */
 export class PostRunPipeline {
   constructor(
     private readonly ctx: CoreContext,
@@ -28,14 +28,8 @@ export class PostRunPipeline {
 
   async handle(runId: string): Promise<void> {
     const run = await this.ctx.store.getRun(runId);
-    if (run.kind === 'refine') {
-      await this.deps.refinement.handleRunFinished(run);
-      return;
-    }
-    if (run.kind === 'chat') {
-      await this.deps.refinement.handleChatFinished(run);
-      return;
-    }
+    if (run.kind === 'refine') return this.deps.refinement.handleRunFinished(run);
+    if (run.kind === 'chat') return this.deps.refinement.handleChatFinished(run);
     await this.handleExecution(run);
   }
 
@@ -53,35 +47,24 @@ export class PostRunPipeline {
     const fail = (message: string) =>
       tasks.transition(task.id, 'doing', 'system', { substate: 'error', error_message: message });
 
-    if (run.status !== 'succeeded') {
-      await fail(run.error_message ?? `run ${run.status}`);
-      return;
-    }
-    if (!run.attempt_id) {
-      await fail('run has no attempt');
-      return;
-    }
+    if (run.status !== 'succeeded') return void (await fail(run.error_message ?? `run ${run.status}`));
+    if (!run.attempt_id) return void (await fail('run has no attempt'));
     const attempt = await store.getAttempt(run.attempt_id);
     const project = await store.getProject(task.project_id);
 
     const exclude = await this.deps.attempts.excludedPaths(attempt);
     if (!(await hasChanges(attempt.worktree_path, attempt.base_commit, { exclude }))) {
-      await fail('agent kết thúc nhưng không thay đổi file nào');
-      return;
+      return void (await fail('the agent finished without changing any files'));
     }
     try {
       await commitAll(attempt.worktree_path, commitMessage(task, attempt.id), { exclude });
     } catch (err) {
-      await fail(`commit failed: ${errorMessage(err)}`);
-      return;
+      return void (await fail(`commit failed: ${errorMessage(err)}`));
     }
 
     let testsOk: boolean | null = null;
-    if (project.test_script?.trim()) {
-      const res = await runScript(project.test_script, attempt.worktree_path, TEST_TIMEOUT_MS);
-      testsOk = res.ok;
-      await store.updateAttempt(attempt.id, { last_test_output: res.output, last_test_ok: res.ok });
-    }
+    if (project.test_script?.trim())
+      testsOk = await this.deps.runner().runTestsFor(attempt, project.test_script);
 
     const pushed = await push(attempt.worktree_path, attempt.branch);
     if (!pushed.ok)
@@ -91,6 +74,11 @@ export class PostRunPipeline {
       substate: testsOk === false ? 'tests_failed' : 'pending',
     });
 
+    // Messages typed while the agent was busy → send them now as a followup.
+    if ((await store.unconsumedFeedback(task.id)).length > 0) {
+      await tasks.transition(task.id, 'doing', 'user');
+      return;
+    }
     if (project.auto_done && testsOk === true) {
       try {
         await tasks.transition(task.id, 'done', 'system');

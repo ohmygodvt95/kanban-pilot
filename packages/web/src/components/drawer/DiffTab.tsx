@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/client';
 import { keys, upsertTask, useDiff } from '../../api/queries';
-import { Button, EmptyState, inputClass } from '../ui';
+import { Button, inputClass } from '../ui';
 import { useToast } from '../ui/Toast';
 
 interface FilePatch {
@@ -43,8 +43,15 @@ const useDark = () => {
 
 export function DiffTab({ task }: { task: TaskDetail }) {
   const attempt = task.current_attempt;
+  // Active attempts diff the worktree; merged ones diff base..branch (worktree is gone but the branch stays).
+  const viewable = attempt && attempt.status !== 'discarded' ? attempt : null;
   const active = attempt?.status === 'active' ? attempt : null;
-  const diff = useDiff(active?.id ?? null);
+  const diff = useDiff(viewable?.id ?? null);
+  const [split, setSplit] = useState<boolean>(() => localStorage.getItem('ak.diff.split') === '1');
+  const _toggleSplit = () => {
+    localStorage.setItem('ak.diff.split', split ? '0' : '1');
+    setSplit(!split);
+  };
   const files = useMemo(() => (diff.data ? splitPatch(diff.data.patch) : []), [diff.data]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const selected = files.find((f) => f.path === selectedPath) ?? files[0] ?? null;
@@ -138,11 +145,11 @@ export function DiffTab({ task }: { task: TaskDetail }) {
                   newFile: { fileName: selected.path },
                   hunks: [selected.hunks],
                 }}
-                diffViewMode={DiffModeEnum.Unified}
+                diffViewMode={split ? DiffModeEnum.Split : DiffModeEnum.Unified}
                 diffViewTheme={dark ? 'dark' : 'light'}
                 diffViewHighlight
                 diffViewFontSize={12}
-                diffViewAddWidget
+                diffViewAddWidget={!!active}
                 onAddWidgetClick={() => {}}
                 renderWidgetLine={({ lineNumber, onClose }) => (
                   <InlineCommentForm
@@ -270,7 +277,6 @@ function InlineCommentForm({
         className={`${inputClass} min-h-14`}
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        autoFocus
         placeholder="Feedback for this line…"
       />
       <div className="flex justify-end gap-2">

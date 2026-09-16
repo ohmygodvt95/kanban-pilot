@@ -10,7 +10,6 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ApiError, api } from '../../api/client';
 import { keys, upsertTask } from '../../api/queries';
@@ -26,12 +25,22 @@ export function Board({
   onOpen,
   onNewTask,
   selectedId,
+  collapsed,
+  onToggleCollapsed,
+  filtering,
+  hiddenCount,
 }: {
   project: Project;
   tasks: Task[];
   onOpen: (id: string) => void;
   onNewTask: () => void;
   selectedId: string | null;
+  /** Columns rendered as a narrow strip (persisted per browser). */
+  collapsed: Set<Column>;
+  onToggleCollapsed: (c: Column) => void;
+  /** A search/filter is active: show how many tasks are hidden. */
+  filtering: boolean;
+  hiddenCount: number;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -134,7 +143,14 @@ export function Board({
       onDragCancel={() => setActiveId(null)}
     >
       {confirmNode}
-      <div className="scrollbar-thin flex h-full gap-3 overflow-x-auto p-3">
+      {filtering ? (
+        <div className="border-accent-200 border-b bg-accent-50 px-4 py-1 text-[11px] text-accent-700 dark:border-accent-900 dark:bg-accent-900/20 dark:text-accent-200">
+          Filter active · {hiddenCount} task{hiddenCount === 1 ? '' : 's'} hidden
+        </div>
+      ) : null}
+      <div
+        className={`scrollbar-thin flex gap-3 overflow-x-auto p-3 ${filtering ? 'h-[calc(100%-1.5rem)]' : 'h-full'}`}
+      >
         {COLUMNS.map((c) => (
           <ColumnView
             key={c}
@@ -143,6 +159,8 @@ export function Board({
             onOpen={onOpen}
             activeId={activeId}
             selectedId={selectedId}
+            collapsed={collapsed.has(c)}
+            onToggleCollapsed={() => onToggleCollapsed(c)}
             defaultExecutor={project.default_executor}
             header={
               c === 'backlog' ? (

@@ -9,7 +9,7 @@ import {
   renderRefinePrompt,
 } from '../prompts/prompts.js';
 import type { RunService } from '../runs/runs.js';
-import type { TaskService } from '../state/tasks.js';
+import { promptContext, type TaskService } from '../state/tasks.js';
 import { CoreError, errorMessage } from '../util/errors.js';
 
 export const MAX_REFINE_ROUNDS = 3;
@@ -45,7 +45,7 @@ export class RefinementService {
     const executorId = task.executor ?? project.default_executor;
     const adapter = getExecutor(this.ctx.executors, executorId);
     const questions = await this.ctx.store.listQuestions(task.id);
-    const prompt = renderRefinePrompt(project.refinement_prompt, task, questions, {
+    const prompt = renderRefinePrompt(promptContext(project), task, questions, {
       structuredOutputSupported: adapter.supportsStructuredOutput,
     });
     return this.deps.runs.create({

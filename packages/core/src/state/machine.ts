@@ -102,7 +102,9 @@ export function decide(
     if (from === 'doing') {
       const ok =
         (task.substate === 'queued' && (substate === 'running' || substate === 'error')) ||
-        (task.substate === 'running' && (substate === 'error' || substate === 'waiting_feedback')) ||
+        // running → queued happens when a run is replaced by a fallback run (session lost)
+        (task.substate === 'running' &&
+          (substate === 'error' || substate === 'waiting_feedback' || substate === 'queued')) ||
         (task.substate === 'waiting_feedback' && (substate === 'running' || substate === 'error')) ||
         (task.substate === 'error' && substate === 'queued');
       if (!ok) throw invalid(`cannot move ${label(task)} → DOING(${substate})`);

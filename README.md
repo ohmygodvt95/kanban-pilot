@@ -39,11 +39,31 @@ Invariants: the agent never moves cards (the system does, from process exit code
 every CLI invocation is a `run` with its full command, event stream, session id and cost;
 the main working tree of your repo is never touched by an agent.
 
+## Resilience & guard rails
+
+- **Detached agents.** CLIs run in their own process group with stdout/stderr redirected to
+  `~/.cache/agent-kanban/logs/<run>/`. Quitting agent-kanban leaves them working; the next start re-attaches to
+  live pids and finalises runs that ended meanwhile (`--kill-agents` to terminate them on exit instead).
+- **Session-lost fallback.** If the CLI cannot resume a session (`No conversation found with session ID`), the run
+  is retried once automatically with a fresh session and enough context (description, diff, feedback).
+- **Model & budget.** Per project (and per task) `model`; `max_budget_usd` caps each run (Claude `--max-budget-usd`).
+- **Script confirmation.** Scripts from a repo's `.agent-kanban.json` are shown and must be accepted before the
+  project is created (`agent-kanban add --accept-scripts` for automation).
+- **Update from base.** Merge the base branch into an attempt from Review; conflicts are handed to the agent as a
+  followup and the merge is committed by the system.
+- **Queued chat.** Messages typed while the agent works are delivered as feedback right after the run ends.
+- **Retention.** Event streams of DONE runs older than 30 days are pruned (`--retention-days`, 0 = never); run
+  metadata (cost, summary) stays. Merged attempts remain diffable via `base..branch`.
+- **Notifications.** The bell in the header enables browser notifications for Review / error / planner questions.
+- **GitHub.** With `GITHUB_TOKEN` and an origin on github.com: import open issues as tasks, and set
+  `done_action = pr` to push the branch and open a pull request instead of merging locally.
+
 ## Project settings
 
-Executor, base branch (auto-detected from `origin/HEAD`), setup script (runs in the worktree before the agent,
-e.g. `pnpm install`), test script, `auto_done` (merge automatically when tests pass — off by default),
-refinement on/off, max concurrent runs, run timeout, and a custom refinement prompt template.
+Executor, model, max budget per run, base branch (auto-detected from `origin/HEAD`), setup script (runs in the
+worktree before the agent, e.g. `pnpm install`), test script, `auto_done` (complete automatically when tests pass —
+off by default), `done_action` (merge locally or open a PR), refinement on/off, max concurrent runs, run timeout,
+prompt language (vi/en) and custom prompt templates (refine / execute / followup).
 A committed `<repo>/.agent-kanban.json` provides defaults when the project is added:
 
 ```json
@@ -62,6 +82,7 @@ pnpm test                 # vitest: core (state machine, parser fixtures, git on
 pnpm build                # turbo: shared → core → server → web → cli (esbuild bundle + web dist)
 pnpm --filter @agent-kanban/core smoke          # real Claude Code: TODO→DOING→REVIEW on a throwaway repo (needs `claude` login)
 pnpm --filter @agent-kanban/core smoke:refine   # real Claude Code: refinement questions → answers → plan
+pnpm --filter @agent-kanban/web e2e             # Playwright against a real server + fake agent (chromium)
 pnpm --filter @agent-kanban/server dev      # API on :3737   (AK_FAKE=1 uses the fake agent, no API cost)
 pnpm --filter @agent-kanban/web dev         # Vite on :5173, proxies /api
 cd packages/cli && npm pack                 # tarball you can `npx ./agent-kanban-x.y.z.tgz`
@@ -73,5 +94,6 @@ Packages: `shared` (zod schemas/types), `core` (domain, publishable as `@agent-k
 
 ## Non-goals (v1)
 
-Multi-user/auth/cloud, Docker sandboxes, automatic PR creation, issue tracker sync (interface only),
-a separate runner daemon, dev-server preview. Codex/Copilot adapters ship as unverified skeletons.
+Multi-user/auth/cloud, Docker sandboxes, two-way issue status sync, a separate runner daemon (agents already
+survive restarts), dev-server preview. Codex/Copilot adapters follow their current `--help` but are not verified
+end-to-end (see docs/executor-notes.md).

@@ -3,8 +3,10 @@ import './suppress-warnings.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import {
+  CoreError,
   createCore,
   createDefaultRegistry,
   defaultPaths,
@@ -25,6 +27,12 @@ interface Args {
   open: boolean;
   host: string;
   path?: string;
+  /** `add`: adopt setup/test scripts from the repo's .agent-kanban.json without prompting. */
+  acceptScripts: boolean;
+  /** `start`: terminate running agents on Ctrl-C instead of leaving them detached. */
+  killAgents: boolean;
+  /** Days to keep event streams of DONE runs (0 = forever). */
+  retentionDays: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -33,6 +41,9 @@ function parseArgs(argv: string[]): Args {
     port: Number(process.env.PORT ?? 3737),
     open: true,
     host: '127.0.0.1',
+    acceptScripts: false,
+    killAgents: false,
+    retentionDays: Number(process.env.AK_RETENTION_DAYS ?? 30),
   };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -41,6 +52,10 @@ function parseArgs(argv: string[]): Args {
     else if (a.startsWith('--port=')) args.port = Number(a.slice(7));
     else if (a === '--no-open') args.open = false;
     else if (a === '--host') args.host = argv[++i] ?? args.host;
+    else if (a === '--accept-scripts' || a === '-y') args.acceptScripts = true;
+    else if (a === '--kill-agents') args.killAgents = true;
+    else if (a === '--retention-days') args.retentionDays = Number(argv[++i]);
+    else if (a.startsWith('--retention-days=')) args.retentionDays = Number(a.slice(17));
     else if (a === '-h' || a === '--help') args.command = 'help';
     else if (a === '-v' || a === '--version') args.command = 'version';
     else rest.push(a);
@@ -89,7 +104,11 @@ function webDistDir(): string | undefined {
 
 async function start(args: Args) {
   const logger = makeLogger();
-  const core = createCore({ logger, builtinTemplatesDir: join(here, '..', 'templates') });
+  const core = createCore({
+    logger,
+    builtinTemplatesDir: join(here, '..', 'templates'),
+    retentionDays: args.retentionDays,
+  });
   await core.start();
   const web = webDistDir();
   if (!web) logger.warn('web UI not found next to the CLI; only the API will be served');
@@ -108,22 +127,66 @@ async function start(args: Args) {
   const shutdown = async (signal: string) => {
     if (stopping) return;
     stopping = true;
-    logger.info(`${signal} received, shutting down (agent processes are terminated)`);
+    const active = core.runner.activeRunIds.length;
+    if (active && !args.killAgents) {
+      logger.info(
+        `${signal} received; ${active} agent run(s) keep working in the background and are re-attached on the next start (use --kill-agents to stop them)`,
+      );
+    } else if (active) logger.info(`${signal} received; terminating ${active} agent run(s)`);
+    else logger.info(`${signal} received, shutting down`);
     await server.close();
-    await core.stop({ killProcesses: true });
+    await core.stop({ killProcesses: args.killAgents });
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
+/** Interactive yes/no on a TTY; false when stdin is not interactive. */
+async function askYesNo(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`${question} [y/N] `);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
 async function add(args: Args) {
   const path = resolve(args.path ?? '.');
   const core = createCore({ builtinTemplatesDir: join(here, '..', 'templates') });
   try {
-    const project = await core.projects.create({ repo_path: path });
-    console.log(`added project "${project.name}" (${project.repo_path}) id=${project.id}`);
-    console.log(`open it with: npx agent-kanban   → /p/${project.id}`);
+    let accept = args.acceptScripts;
+    for (;;) {
+      try {
+        const project = await core.projects.create({ repo_path: path, accept_repo_scripts: accept });
+        console.log(`added project "${project.name}" (${project.repo_path}) id=${project.id}`);
+        console.log(`open it with: npx agent-kanban   → /p/${project.id}`);
+        return;
+      } catch (err) {
+        // The repo's .agent-kanban.json defines scripts: show them before running anything.
+        if (err instanceof CoreError && err.code === 'CONFIRM_REQUIRED' && !accept) {
+          const scripts = err.details as { setup_script: string | null; test_script: string | null };
+          console.log(
+            `${path}/.agent-kanban.json defines scripts that agent-kanban would run on this machine:`,
+          );
+          if (scripts.setup_script) console.log(`  setup_script: ${scripts.setup_script}`);
+          if (scripts.test_script) console.log(`  test_script:  ${scripts.test_script}`);
+          accept = await askYesNo('Adopt these scripts?');
+          if (!accept) {
+            console.error(
+              'aborted (re-run with --accept-scripts to adopt them, or add the project from the UI)',
+            );
+            process.exitCode = 1;
+            return;
+          }
+          continue;
+        }
+        throw err;
+      }
+    }
   } catch (err) {
     console.error(`cannot add project: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
@@ -158,6 +221,10 @@ async function doctor() {
       `${ok(res.ok)} ${adapter.displayName}${res.version ? ` ${res.version}` : ''}${res.message ? ` — ${res.message}` : ''}`,
     );
   }
+  const ghToken = !!(process.env.GITHUB_TOKEN || process.env.GH_TOKEN);
+  console.log(
+    `${ghToken ? '✓' : '·'} GITHUB_TOKEN/GH_TOKEN ${ghToken ? 'set (issue import + pull requests enabled)' : 'not set (GitHub features disabled)'}`,
+  );
   const cwdIsRepo = await isGitRepo(process.cwd());
   console.log(`${cwdIsRepo ? '✓' : '·'} current directory ${cwdIsRepo ? 'is' : 'is not'} a git repository`);
   const paths = defaultPaths();
@@ -170,9 +237,14 @@ function help() {
 
 Usage:
   agent-kanban [start] [--port 3737] [--no-open] [--host 127.0.0.1]   start the server and open the UI
-  agent-kanban add [path]                                            register a git repo as a project (default: .)
-  agent-kanban doctor                                                check node, git, sqlite and executor CLIs
+      --kill-agents          terminate running agents on exit (default: they keep running and are re-attached)
+      --retention-days N     delete event streams of DONE runs older than N days (default 30, 0 = never)
+  agent-kanban add [path] [--accept-scripts|-y]                      register a git repo as a project (default: .)
+  agent-kanban doctor                                                check node, git, sqlite, executor CLIs, GitHub token
   agent-kanban --version | --help
+
+Environment: GITHUB_TOKEN / GH_TOKEN (issue import, pull requests), ANTHROPIC_* / CLAUDE_CODE_* (forwarded to Claude Code),
+             XDG_CONFIG_HOME / XDG_CACHE_HOME (db, worktrees and logs location), LOG_LEVEL, PORT.
 `);
 }
 

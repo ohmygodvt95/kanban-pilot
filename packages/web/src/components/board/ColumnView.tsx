@@ -1,6 +1,7 @@
 import type { Column, Task } from '@agent-kanban/shared';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { ChevronsLeft, ChevronsRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { COLUMN_DOT, COLUMN_HINTS, COLUMN_LABELS } from '../../lib/state';
 import { TaskCard } from './TaskCard';
@@ -13,6 +14,8 @@ export function ColumnView({
   header,
   activeId,
   selectedId,
+  collapsed,
+  onToggleCollapsed,
 }: {
   column: Column;
   tasks: Task[];
@@ -21,8 +24,35 @@ export function ColumnView({
   header?: ReactNode;
   activeId: string | null;
   selectedId: string | null;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column, data: { type: 'column', column } });
+  if (collapsed) {
+    // Narrow strip: still a drop target, shows the count; click to expand.
+    return (
+      <div
+        ref={setNodeRef}
+        className={`flex w-10 shrink-0 flex-col items-center gap-2 rounded-xl bg-zinc-200/50 py-3 dark:bg-zinc-900/70 ${isOver ? 'ring-2 ring-accent-400' : ''}`}
+      >
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+          title={`Expand ${COLUMN_LABELS[column]}`}
+        >
+          <ChevronsRight size={14} />
+        </button>
+        <span className={`h-2 w-2 rounded-full ${COLUMN_DOT[column]}`} />
+        <span className="rounded-full bg-white px-1.5 py-0.5 font-medium text-[11px] text-zinc-500 dark:bg-zinc-800">
+          {tasks.length}
+        </span>
+        <span className="mt-1 font-semibold text-sm text-zinc-700 [writing-mode:vertical-rl] dark:text-zinc-200">
+          {COLUMN_LABELS[column]}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-xl bg-zinc-200/50 dark:bg-zinc-900/70 xl:w-auto xl:flex-1">
       <div className="flex items-center gap-2 px-3 pt-3 pb-2" title={COLUMN_HINTS[column]}>
@@ -33,6 +63,16 @@ export function ColumnView({
         </span>
         <span className="flex-1" />
         {header}
+        {onToggleCollapsed ? (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="rounded-md p-0.5 text-zinc-400 hover:bg-white hover:text-zinc-700 dark:hover:bg-zinc-800"
+            title={`Collapse ${COLUMN_LABELS[column]}`}
+          >
+            <ChevronsLeft size={14} />
+          </button>
+        ) : null}
       </div>
       <div
         ref={setNodeRef}

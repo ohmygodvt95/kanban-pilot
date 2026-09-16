@@ -32,5 +32,22 @@ export const MIGRATIONS: EmbeddedMigration[] = [
     "sql": [
       "ALTER TABLE `runs` ADD `result_text` text;"
     ]
+  },
+  {
+    "tag": "0002_reflective_the_stranger",
+    "when": 1789537778350,
+    "hash": "51c1c0e0caf16c54aae0b93e6ca25d9a1e24ad4b95847acc1aa4cc3b02ce1fe3",
+    "sql": [
+      "ALTER TABLE `projects` ADD `model` text;",
+      "ALTER TABLE `projects` ADD `max_budget_usd` real;",
+      "ALTER TABLE `projects` ADD `prompt_language` text DEFAULT 'vi' NOT NULL;",
+      "ALTER TABLE `projects` ADD `execute_prompt` text;",
+      "ALTER TABLE `projects` ADD `followup_prompt` text;",
+      "ALTER TABLE `projects` ADD `done_action` text DEFAULT 'merge' NOT NULL;",
+      "ALTER TABLE `runs` ADD `pid` integer;",
+      "ALTER TABLE `runs` ADD `log_dir` text;",
+      "ALTER TABLE `runs` ADD `fallback_of_run_id` text;",
+      "ALTER TABLE `tasks` ADD `model` text;"
+    ]
   }
 ];

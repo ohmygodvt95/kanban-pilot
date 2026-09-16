@@ -349,6 +349,45 @@ export class Store {
     return event;
   }
 
+  /** Number of persisted events per stream, used to skip lines when re-attaching to a live process. */
+  async countRunEventLines(runId: string): Promise<{ stdout: number; stderr: number }> {
+    const rows = await this.db
+      .select({ type: runEvents.type, n: count() })
+      .from(runEvents)
+      .where(eq(runEvents.run_id, runId))
+      .groupBy(runEvents.type);
+    let stdout = 0;
+    let stderr = 0;
+    for (const r of rows) {
+      if (r.type === 'stderr') stderr += r.n;
+      else stdout += r.n;
+    }
+    return { stdout, stderr };
+  }
+
+  /**
+   * Retention: delete the event streams of runs that finished more than `days`
+   * ago and whose task is DONE. Run metadata (cost, status, summary) is kept.
+   */
+  async pruneRunEvents(days: number): Promise<number> {
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+    const stale = await this.db
+      .select({ id: runs.id })
+      .from(runs)
+      .innerJoin(tasks, eq(runs.task_id, tasks.id))
+      .where(
+        and(eq(tasks.column, 'done'), sql`${runs.finished_at} IS NOT NULL`, lte(runs.finished_at, cutoff)),
+      );
+    if (stale.length === 0) return 0;
+    const ids = stale.map((r) => r.id);
+    const [before] = await this.db
+      .select({ n: count() })
+      .from(runEvents)
+      .where(inArray(runEvents.run_id, ids));
+    await this.db.delete(runEvents).where(inArray(runEvents.run_id, ids));
+    return before?.n ?? 0;
+  }
+
   async listRunEvents(runId: string, after = 0, limit = 5000): Promise<RunEvent[]> {
     return (
       await this.db
@@ -402,6 +441,14 @@ export class Store {
     if (!c) throw notFound('comment', row.id);
     await this.touchTask(values.task_id);
     return c;
+  }
+
+  async commentsConsumedBy(runId: string): Promise<Comment[]> {
+    return await this.db
+      .select()
+      .from(comments)
+      .where(eq(comments.consumed_by_run_id, runId))
+      .orderBy(asc(comments.created_at));
   }
 
   async markCommentsConsumed(ids: string[], runId: string): Promise<void> {

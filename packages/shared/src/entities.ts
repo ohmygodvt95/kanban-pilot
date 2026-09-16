@@ -3,8 +3,10 @@ import {
   attemptStatusSchema,
   columnSchema,
   commentKindSchema,
+  doneActionSchema,
   executorIdSchema,
   jobStatusSchema,
+  promptLanguageSchema,
   providerIdSchema,
   runEventTypeSchema,
   runKindSchema,
@@ -28,6 +30,17 @@ export const projectSchema = z.object({
   max_concurrent_runs: z.number().int(),
   run_timeout_minutes: z.number().int(),
   refinement_prompt: nullableString,
+  /** Default model passed to the executor (e.g. "sonnet"); null = CLI default. */
+  model: nullableString,
+  /** Hard cap in USD per run (Claude: --max-budget-usd); null = unlimited. */
+  max_budget_usd: z.number().nullable(),
+  /** Language of the built-in prompt templates. */
+  prompt_language: promptLanguageSchema,
+  /** Optional overrides of the execute / followup prompt templates. */
+  execute_prompt: nullableString,
+  followup_prompt: nullableString,
+  /** REVIEW → DONE behaviour: local merge or push + pull request. */
+  done_action: doneActionSchema,
   created_at: isoDate,
   updated_at: isoDate,
 });
@@ -42,6 +55,8 @@ export const taskSchema = z.object({
   substate: substateSchema.nullable(),
   position: z.number(),
   executor: executorIdSchema.nullable(),
+  /** Per-task model override; null = project default. */
+  model: nullableString,
   skip_refinement: z.boolean(),
   plan: nullableString,
   refinement_session_id: nullableString,
@@ -95,6 +110,12 @@ export const runSchema = z.object({
   cost_usd: z.number().nullable(),
   num_turns: z.number().int().nullable(),
   error_message: nullableString,
+  /** OS pid of the detached agent process while running. */
+  pid: z.number().int().nullable(),
+  /** Directory holding stdout/stderr/exit files of the detached process. */
+  log_dir: nullableString,
+  /** Set when this run was created automatically because `fallback_of_run_id` failed to resume its session. */
+  fallback_of_run_id: nullableString,
   started_at: isoDate.nullable(),
   finished_at: isoDate.nullable(),
   created_at: isoDate,
@@ -172,6 +193,25 @@ export const diffResultSchema = z.object({
   patch: z.string(),
 });
 export type DiffResult = z.infer<typeof diffResultSchema>;
+
+/** An issue from an external tracker (GitHub for now). */
+export const externalIssueSchema = z.object({
+  externalId: z.string(),
+  url: z.string(),
+  title: z.string(),
+  body: z.string(),
+  labels: z.array(z.string()),
+});
+export type ExternalIssue = z.infer<typeof externalIssueSchema>;
+
+export const providerStatusSchema = z.object({
+  id: providerIdSchema,
+  ok: z.boolean(),
+  message: z.string().optional(),
+  /** e.g. "owner/repo" detected from the origin remote. */
+  projectRef: z.string().nullable(),
+});
+export type ProviderStatus = z.infer<typeof providerStatusSchema>;
 
 export const executorStatusSchema = z.object({
   id: executorIdSchema,

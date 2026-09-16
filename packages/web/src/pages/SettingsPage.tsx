@@ -5,7 +5,7 @@ import { Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { keys, useProject } from '../api/queries';
+import { keys, useProject, useProvider } from '../api/queries';
 import { Shell } from '../components/Shell';
 import { Button, Card, Field, inputClass, Switch, useConfirm } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
@@ -26,10 +26,26 @@ export function SettingsPage() {
   );
 }
 
-type Form = Required<Omit<UpdateProjectInput, 'setup_script' | 'test_script' | 'refinement_prompt'>> & {
+/** Editable copy of the project; nullable text columns are edited as strings ('' = null). */
+type Form = Required<
+  Omit<
+    UpdateProjectInput,
+    | 'setup_script'
+    | 'test_script'
+    | 'refinement_prompt'
+    | 'model'
+    | 'max_budget_usd'
+    | 'execute_prompt'
+    | 'followup_prompt'
+  >
+> & {
   setup_script: string;
   test_script: string;
   refinement_prompt: string;
+  model: string;
+  max_budget_usd: string;
+  execute_prompt: string;
+  followup_prompt: string;
 };
 
 const toForm = (p: Project): Form => ({
@@ -43,13 +59,22 @@ const toForm = (p: Project): Form => ({
   max_concurrent_runs: p.max_concurrent_runs,
   run_timeout_minutes: p.run_timeout_minutes,
   refinement_prompt: p.refinement_prompt ?? '',
+  model: p.model ?? '',
+  max_budget_usd: p.max_budget_usd === null ? '' : String(p.max_budget_usd),
+  prompt_language: p.prompt_language,
+  execute_prompt: p.execute_prompt ?? '',
+  followup_prompt: p.followup_prompt ?? '',
+  done_action: p.done_action,
 });
+
+const orNull = (v: string) => (v.trim() ? v : null);
 
 function SettingsForm({ project }: { project: Project }) {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
   const [confirm, confirmNode] = useConfirm();
+  const _provider = useProvider(project.id);
   const [form, setForm] = useState<Form>(() => toForm(project));
   useEffect(() => setForm(toForm(project)), [project]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -58,9 +83,13 @@ function SettingsForm({ project }: { project: Project }) {
     mutationFn: () =>
       api.projects.update(project.id, {
         ...form,
-        setup_script: form.setup_script.trim() ? form.setup_script : null,
-        test_script: form.test_script.trim() ? form.test_script : null,
-        refinement_prompt: form.refinement_prompt.trim() ? form.refinement_prompt : null,
+        setup_script: orNull(form.setup_script),
+        test_script: orNull(form.test_script),
+        refinement_prompt: orNull(form.refinement_prompt),
+        execute_prompt: orNull(form.execute_prompt),
+        followup_prompt: orNull(form.followup_prompt),
+        model: orNull(form.model),
+        max_budget_usd: form.max_budget_usd.trim() ? Number(form.max_budget_usd) : null,
       }),
     onSuccess: (p) => {
       qc.setQueryData(keys.project(p.id), p);

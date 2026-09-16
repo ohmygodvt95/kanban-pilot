@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useRunEvents } from '../../api/queries';
 import { formatCost, formatDuration, formatTime, short } from '../../lib/format';
-import { EmptyState, Spinner } from '../ui';
+import { Spinner } from '../ui';
 
 const RUN_STATUS_STYLE: Record<Run['status'], string> = {
   queued: 'text-zinc-500',
@@ -24,7 +24,7 @@ export function ActivityTab({ task }: { task: TaskDetail }) {
   const [follow, setFollow] = useState(true);
   useEffect(() => {
     if (follow && bottomRef.current) bottomRef.current.scrollIntoView({ block: 'end' });
-  }, [events.data, follow]);
+  }, [follow]);
 
   if (!latest)
     return (

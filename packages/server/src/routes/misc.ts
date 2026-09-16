@@ -15,7 +15,9 @@ export function attemptRoutes(core: Core) {
   app.get('/:id', async (c) => c.json(await core.store.getAttempt(c.req.param('id'))));
   app.get('/:id/diff', async (c) => {
     const attempt = await core.store.getAttempt(c.req.param('id'));
-    return c.json(await core.attempts.diff(attempt));
+    const task = await core.store.getTask(attempt.task_id);
+    const project = await core.store.getProject(task.project_id);
+    return c.json(await core.attempts.diff(attempt, project));
   });
   app.get('/:id/tests', async (c) => {
     const attempt = await core.store.getAttempt(c.req.param('id'));

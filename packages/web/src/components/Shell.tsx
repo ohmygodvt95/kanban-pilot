@@ -1,8 +1,10 @@
-import { ChevronDown, Settings, Wifi, WifiOff } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Bell, BellOff, ChevronDown, Settings, Wifi, WifiOff } from 'lucide-react';
+import { type ReactNode, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useProjects } from '../api/queries';
+import { notificationsEnabled, notificationsSupported, setNotificationsEnabled } from '../lib/notify';
 import { IconButton } from './ui';
+import { useToast } from './ui/Toast';
 
 export function Logo({ size = 22 }: { size?: number }) {
   return (
@@ -19,15 +21,40 @@ export function Logo({ size = 22 }: { size?: number }) {
   );
 }
 
+/** Bell toggle for browser notifications (Review reached, run failed, planner questions). */
+function NotificationToggle() {
+  const toast = useToast();
+  const [enabled, setEnabled] = useState(notificationsEnabled());
+  if (!notificationsSupported()) return null;
+  return (
+    <IconButton
+      label={enabled ? 'Notifications on (click to disable)' : 'Enable browser notifications'}
+      className={enabled ? 'text-accent-600 dark:text-accent-300' : ''}
+      onClick={async () => {
+        const next = await setNotificationsEnabled(!enabled);
+        setEnabled(next);
+        if (!enabled && !next)
+          toast.push({ kind: 'error', text: 'Notifications were blocked by the browser' });
+      }}
+    >
+      {enabled ? <Bell size={16} /> : <BellOff size={16} />}
+    </IconButton>
+  );
+}
+
 export function Shell({
   projectId,
   live,
   right,
+  center,
   children,
 }: {
   projectId?: string;
   live?: 'connecting' | 'open' | 'reconnecting';
+  /** Right-aligned header content (actions). */
   right?: ReactNode;
+  /** Header content between the breadcrumb and the actions (search/filters). */
+  center?: ReactNode;
   children: ReactNode;
 }) {
   const projects = useProjects();
@@ -59,13 +86,17 @@ export function Shell({
               <ChevronDown size={14} className="pointer-events-none absolute top-2.5 right-2 text-zinc-400" />
             </div>
             {current ? (
-              <span className="hidden truncate font-mono text-[11px] text-zinc-400 lg:inline">
+              <span className="hidden max-w-[28ch] truncate font-mono text-[11px] text-zinc-400 xl:inline">
                 {current.repo_path}
               </span>
             ) : null}
           </>
         ) : null}
-        <span className="flex-1" />
+        {center ? (
+          <div className="ml-2 flex min-w-0 flex-1 items-center gap-2">{center}</div>
+        ) : (
+          <span className="flex-1" />
+        )}
         {live ? (
           <span
             className={`hidden items-center gap-1 rounded-full px-2 py-0.5 text-[11px] sm:inline-flex ${
@@ -80,6 +111,7 @@ export function Shell({
           </span>
         ) : null}
         {right}
+        <NotificationToggle />
         {projectId ? (
           <Link to={`/p/${projectId}/settings`}>
             <IconButton label="Project settings">

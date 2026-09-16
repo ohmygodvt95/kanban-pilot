@@ -1,7 +1,8 @@
-import type { Attempt, Run, RunEvent, SseEvent, TaskDetail } from '@agent-kanban/shared';
+import type { Attempt, Run, RunEvent, SseEvent, Task, TaskDetail } from '@agent-kanban/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useToast } from '../components/ui/Toast';
+import { notify } from '../lib/notify';
 import { keys, removeTask, upsertTask } from './queries';
 
 /**
@@ -39,7 +40,21 @@ export function useProjectEvents(projectId: string): 'connecting' | 'open' | 're
       });
     };
 
-    on('task.updated', (e) => upsertTask(qc, e.task));
+    on('task.updated', (e) => {
+      // Notify on milestones: entering Review, or an error while working.
+      const prev = qc.getQueryData<Task[]>(keys.tasks(e.project_id))?.find((t) => t.id === e.task.id);
+      if (prev && (prev.column !== e.task.column || prev.substate !== e.task.substate)) {
+        if (e.task.column === 'review' && prev.column === 'doing')
+          notify('Ready for review', e.task.title, e.task.id);
+        else if (e.task.column === 'doing' && e.task.substate === 'error')
+          notify('Agent run failed', `${e.task.title}\n${e.task.last_error ?? ''}`, e.task.id);
+        else if (e.task.column === 'backlog' && e.task.substate === 'needs_answer')
+          notify('The planner has questions', e.task.title, e.task.id);
+        else if (e.task.column === 'done' && prev.column !== 'done')
+          notify('Merged', e.task.title, e.task.id);
+      }
+      upsertTask(qc, e.task);
+    });
     on('task.deleted', (e) => removeTask(qc, e.project_id, e.task_id));
     on('run.updated', (e) => {
       const run: Run = e.run;

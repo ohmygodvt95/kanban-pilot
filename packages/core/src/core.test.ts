@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,7 +108,7 @@ describe('core end-to-end with fake executor', () => {
     expect(detail.current_attempt?.last_test_ok).toBe(true);
 
     // diff shows the agent's files, committed on the attempt branch
-    const diff = await core.attempts.diff(detail.current_attempt!);
+    const diff = await core.attempts.diff(detail.current_attempt!, project);
     expect(diff.files.map((f) => f.path).sort()).toEqual(['agent.txt', 'generated/note.md']);
     const log = await git(detail.current_attempt!.worktree_path, ['log', '--oneline']);
     expect(log.stdout.split('\n')).toHaveLength(2);
@@ -155,6 +156,9 @@ describe('core end-to-end with fake executor', () => {
     expect(await readFile(join(repo, 'agent.txt'), 'utf8')).toContain('hello from fake agent');
     const attempt = await core.store.getAttempt(detail3.current_attempt!.id);
     expect(attempt.status).toBe('merged');
+    // merged attempts stay inspectable through base..branch
+    const mergedDiff = await core.attempts.diff(attempt, project);
+    expect(mergedDiff.files.map((f) => f.path)).toContain('agent.txt');
     await expect(core.tasks.transition(task.id, 'todo', 'user')).rejects.toMatchObject({
       code: 'INVALID_TRANSITION',
     });
@@ -167,7 +171,7 @@ describe('core end-to-end with fake executor', () => {
     const errP = waitState(task.id, 'doing', 'error');
     await core.tasks.transition(task.id, 'doing', 'user');
     const err = (await errP).task;
-    expect(err.last_error).toMatch(/không thay đổi file/);
+    expect(err.last_error).toMatch(/without changing any files/);
 
     // retry resumes the failed session; still no change → error again
     const err2P = waitState(task.id, 'doing', 'error');
@@ -330,10 +334,12 @@ describe('core end-to-end with fake executor', () => {
       join(repo, '.agent-kanban.json'),
       JSON.stringify({ test_script: 'true', refinement_enabled: false }),
     );
-    const p = await core.projects.create({ repo_path: repo });
+    const p = await core.projects.create({ repo_path: repo, accept_repo_scripts: true });
     expect(p.test_script).toBe('true');
     expect(p.refinement_enabled).toBe(false);
-    await expect(core.projects.create({ repo_path: repo })).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(core.projects.create({ repo_path: repo, accept_repo_scripts: true })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
   });
 });
 
@@ -448,5 +454,219 @@ describe('chat with the agent', () => {
     await reviewP;
     await core.tasks.transition(task.id, 'done', 'user');
     await expect(core.tasks.chat(task.id, 'hi')).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
+  });
+});
+
+describe('resilience features', () => {
+  let root: string;
+  let repo: string;
+  let core: Core;
+  const paths = () => ({
+    dbPath: join(root, 'db.sqlite'),
+    worktreesRoot: join(root, 'wt'),
+    logsRoot: join(root, 'logs'),
+    userTemplatesDir: join(root, 'tpl'),
+    configDir: root,
+  });
+  const waitState = (id: string, column: Task['column'], substate?: Task['substate']) =>
+    core.events.waitFor(
+      'task.updated',
+      (p) =>
+        p.task.id === id &&
+        p.task.column === column &&
+        (substate === undefined || p.task.substate === substate),
+      20_000,
+    );
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'ak-res-'));
+    repo = join(root, 'repo');
+    await makeRepo(repo);
+    core = createCore({
+      paths: paths(),
+      executors: { claude: new FakeClaudeAdapter() },
+      runner: { pollIntervalMs: 50 },
+    });
+    await core.start();
+  });
+  afterEach(async () => {
+    await core.stop({ killProcesses: true });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('retries once without --resume when the session is gone (followup)', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const task = await core.tasks.create(project.id, { title: 'lost', description: 'FAKE:nosession base' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const reviewP = waitState(task.id, 'review');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await reviewP;
+    await core.tasks.addComment(task.id, { kind: 'feedback', body: 'tweak' });
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await waitState(task.id, 'review');
+    const detail = await core.tasks.detail(task.id);
+    const [exec, lost, fallback] = detail.runs;
+    expect(lost?.kind).toBe('followup');
+    expect(lost?.status).toBe('failed');
+    expect(lost?.error_message).toMatch(/retried automatically without resume/);
+    expect(fallback?.kind).toBe('followup');
+    expect(fallback?.resumed_from_session_id).toBeNull();
+    expect(fallback?.fallback_of_run_id).toBe(lost?.id);
+    expect(fallback?.status).toBe('succeeded');
+    expect(fallback?.prompt).toContain('git diff');
+    expect(fallback?.prompt).toContain('1. tweak');
+    expect(detail.comments[0]?.consumed_by_run_id).toBe(fallback?.id);
+    expect(exec?.status).toBe('succeeded');
+  });
+
+  it('queues chat messages while the agent runs and sends them right after', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const task = await core.tasks.create(project.id, { title: 'busy', description: 'FAKE:sleep=1200' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const runningP = waitState(task.id, 'doing', 'running');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await runningP;
+    const t = await core.tasks.chat(task.id, 'also update the readme');
+    expect(t.substate).toBe('running');
+    expect(t.unconsumed_feedback).toBe(1);
+    // first review → immediately back to doing with the queued message → review again
+    await core.events.waitFor(
+      'run.updated',
+      (p) => p.run.task_id === task.id && p.run.kind === 'followup' && p.run.status === 'succeeded',
+      20_000,
+    );
+    await waitState(task.id, 'review');
+    const detail = await core.tasks.detail(task.id);
+    expect(detail.runs.map((r) => r.kind)).toEqual(['execute', 'followup']);
+    expect(detail.runs[1]?.prompt).toContain('1. also update the readme');
+    expect(detail.unconsumed_feedback).toBe(0);
+  });
+
+  it('updates an attempt from base, resolving conflicts through the agent', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const task = await core.tasks.create(project.id, { title: 'stale', description: 'x' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const reviewP = waitState(task.id, 'review');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await reviewP;
+    // base moves on without conflict
+    await writeFile(join(repo, 'NEWS.md'), 'news\n');
+    await git(repo, ['add', '-A']);
+    await git(repo, ['commit', '-q', '-m', 'news']);
+    const clean = await core.tasks.updateFromBase(task.id);
+    expect(clean.conflicts).toEqual([]);
+    expect(clean.task.column).toBe('review');
+    let detail = await core.tasks.detail(task.id);
+    const wt = detail.current_attempt!.worktree_path;
+    expect(await readFile(join(wt, 'NEWS.md'), 'utf8')).toBe('news\n');
+    expect(detail.current_attempt!.base_commit).toBe((await git(repo, ['rev-parse', 'main'])).stdout);
+    // diff still shows only the attempt's files
+    expect(
+      (await core.attempts.diff(detail.current_attempt!, project)).files.map((f) => f.path),
+    ).not.toContain('NEWS.md');
+
+    // now a conflicting change on base (agent.txt)
+    await writeFile(join(repo, 'agent.txt'), 'from base\n');
+    await git(repo, ['add', '-A']);
+    await git(repo, ['commit', '-q', '-m', 'conflict']);
+    const res = await core.tasks.updateFromBase(task.id);
+    expect(res.conflicts).toEqual(['agent.txt']);
+    expect(res.task.column).toBe('doing');
+    await waitState(task.id, 'review');
+    detail = await core.tasks.detail(task.id);
+    const followup = detail.runs.at(-1)!;
+    expect(followup.kind).toBe('followup');
+    expect(followup.prompt).toMatch(/conflict/i);
+    expect(followup.prompt).toContain('agent.txt');
+    // the fake agent appended a line; the merge was committed by the system (no MERGE_HEAD left)
+    expect(existsSync(join(wt, '.git'))).toBe(true);
+    const status = await git(wt, ['status', '--porcelain']);
+    expect(status.stdout.split('\n').filter((l) => l && !l.startsWith('??'))).toEqual([]); // only the seeded CLAUDE.md is untracked
+    expect((await git(wt, ['log', '--oneline', '-1'])).stdout).toContain('stale');
+  });
+
+  it('re-runs tests on demand and reflects the result on a REVIEW task', async () => {
+    const project = await core.projects.create({
+      repo_path: repo,
+      refinement_enabled: false,
+      test_script: 'test -f flag.txt',
+    });
+    const task = await core.tasks.create(project.id, { title: 'tests', description: 'x' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const reviewP = waitState(task.id, 'review', 'tests_failed');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await reviewP;
+    const detail = await core.tasks.detail(task.id);
+    await writeFile(join(detail.current_attempt!.worktree_path, 'flag.txt'), '1');
+    const passed = waitState(task.id, 'review', 'pending');
+    await core.tasks.runTests(task.id);
+    await passed;
+    expect((await core.store.getAttempt(detail.current_attempt!.id)).last_test_ok).toBe(true);
+  });
+
+  it('survives a restart: the running agent is re-attached and finalised by the new process', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const task = await core.tasks.create(project.id, { title: 'restart', description: 'FAKE:sleep=2500' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const runningP = waitState(task.id, 'doing', 'running');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await runningP;
+    // the pid is stored right after spawn; poll briefly for it
+    let runBefore = (await core.store.listRuns(task.id))[0]!;
+    for (let i = 0; i < 20 && !runBefore.pid; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      runBefore = (await core.store.listRuns(task.id))[0]!;
+    }
+    expect(runBefore.pid).toBeGreaterThan(0);
+    // stop WITHOUT killing the agent, then boot a fresh core on the same db
+    await core.stop();
+    core = createCore({
+      paths: paths(),
+      executors: { claude: new FakeClaudeAdapter() },
+      runner: { pollIntervalMs: 50 },
+    });
+    const reviewP = waitState(task.id, 'review');
+    await core.start();
+    expect(core.runner.activeRunIds).toContain(runBefore.id);
+    await reviewP;
+    const detail = await core.tasks.detail(task.id);
+    expect(detail.runs[0]?.status).toBe('succeeded');
+    expect(detail.runs[0]?.cost_usd).toBeCloseTo(0.05);
+    const events = await core.store.listRunEvents(runBefore.id);
+    expect(events.filter((e) => e.type === 'result')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'system')).toHaveLength(1); // no duplicated init line
+  });
+
+  it('prunes event streams of old DONE runs but keeps run metadata', async () => {
+    const project = await core.projects.create({ repo_path: repo, refinement_enabled: false });
+    const task = await core.tasks.create(project.id, { title: 'old', description: 'x' });
+    await core.tasks.transition(task.id, 'todo', 'user');
+    const reviewP = waitState(task.id, 'review');
+    await core.tasks.transition(task.id, 'doing', 'user');
+    await reviewP;
+    await core.tasks.transition(task.id, 'done', 'user');
+    const run = (await core.store.listRuns(task.id))[0]!;
+    expect(await core.store.pruneRunEvents(30)).toBe(0);
+    await core.store.updateRun(run.id, { finished_at: new Date(Date.now() - 40 * 86_400_000).toISOString() });
+    expect(await core.store.pruneRunEvents(30)).toBeGreaterThan(0);
+    expect(await core.store.listRunEvents(run.id)).toEqual([]);
+    expect((await core.store.getRun(run.id)).cost_usd).toBeCloseTo(0.05);
+  });
+
+  it('requires confirmation before adopting scripts from .agent-kanban.json', async () => {
+    await writeFile(
+      join(repo, '.agent-kanban.json'),
+      JSON.stringify({ setup_script: 'echo hi', test_script: 'true' }),
+    );
+    await expect(core.projects.create({ repo_path: repo })).rejects.toMatchObject({
+      code: 'CONFIRM_REQUIRED',
+      details: { setup_script: 'echo hi', test_script: 'true' },
+    });
+    const p = await core.projects.create({ repo_path: repo, accept_repo_scripts: true });
+    expect(p.setup_script).toBe('echo hi');
+    await core.projects.delete(p.id);
+    // explicit values need no confirmation
+    const p2 = await core.projects.create({ repo_path: repo, setup_script: null, test_script: 'false' });
+    expect(p2.setup_script).toBeNull();
+    expect(p2.test_script).toBe('false');
   });
 });

@@ -10,6 +10,8 @@ export interface CreateRunInput {
   resumeSessionId?: string | null;
   /** Run the project's setup_script in the worktree before the agent (fresh attempts). */
   setupScript?: string | null;
+  /** Set when this run replaces one whose session could not be resumed. */
+  fallbackOfRunId?: string | null;
 }
 
 export interface RunAgentJobPayload {
@@ -30,6 +32,12 @@ export interface PostRunJobPayload {
   projectId: string;
 }
 
+export interface RunTestsJobPayload {
+  attemptId: string;
+  taskId: string;
+  projectId: string;
+}
+
 export class RunService {
   constructor(private readonly ctx: CoreContext) {}
 
@@ -43,6 +51,7 @@ export class RunService {
       prompt: input.prompt,
       status: 'queued',
       resumed_from_session_id: input.resumeSessionId ?? null,
+      fallback_of_run_id: input.fallbackOfRunId ?? null,
     });
     const base: RunAgentJobPayload = {
       runId: run.id,

@@ -207,8 +207,13 @@ export async function diffWorktree(
   ]);
   const patch = await git(worktreePath, ['diff', '--cached', '-M', '--no-color', baseCommit, ...spec]);
 
+  return parseDiffOutput(numstat.stdout, nameStatus.stdout, patch.stdout);
+}
+
+/** Turn `--numstat` + `--name-status` + patch output into a DiffResult. */
+function parseDiffOutput(numstatOut: string, nameStatusOut: string, patchOut: string): DiffResult {
   const statusByPath = new Map<string, { status: DiffFile['status']; oldPath: string | null }>();
-  for (const line of nameStatus.stdout.split('\n')) {
+  for (const line of nameStatusOut.split('\n')) {
     if (!line.trim()) continue;
     const parts = line.split('\t');
     const code = parts[0] ?? '';
@@ -220,7 +225,7 @@ export async function diffWorktree(
     }
   }
   const files: DiffFile[] = [];
-  for (const line of numstat.stdout.split('\n')) {
+  for (const line of numstatOut.split('\n')) {
     if (!line.trim()) continue;
     const [add, del, ...rest] = line.split('\t');
     let path = rest.join('\t');
@@ -245,7 +250,7 @@ export async function diffWorktree(
       status: binary ? 'binary' : (st?.status ?? 'modified'),
     });
   }
-  return { files, patch: patch.stdout };
+  return { files, patch: patchOut };
 }
 
 export async function hasChanges(
@@ -360,6 +365,69 @@ export async function listWorktrees(repoPath: string): Promise<string[]> {
     .split('\n')
     .filter((l) => l.startsWith('worktree '))
     .map((l) => l.slice('worktree '.length).trim());
+}
+
+/** Files with unresolved conflicts in `cwd` (after a failed merge). */
+export async function conflictedFiles(cwd: string): Promise<string[]> {
+  const r = await git(cwd, ['diff', '--name-only', '--diff-filter=U']);
+  return r.stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+export interface MergeIntoWorktreeResult {
+  /** true when the merge completed (or the branch was already up to date). */
+  merged: boolean;
+  /** Conflicted paths when the merge stopped; the merge is left in progress for the agent. */
+  conflicts: string[];
+  /** Commit of `ref` that was merged in. */
+  refCommit: string;
+}
+
+/**
+ * Merge `ref` (the project's base branch) INTO the attempt's worktree branch.
+ * On conflicts the merge stays in progress (MERGE_HEAD) so an agent can resolve
+ * the files and the system can commit the merge afterwards.
+ */
+export async function mergeIntoWorktree(
+  worktreePath: string,
+  ref: string,
+  message: string,
+): Promise<MergeIntoWorktreeResult> {
+  const refCommit = (await git(worktreePath, ['rev-parse', ref])).stdout.trim();
+  const args = ['merge', '--no-edit', '-m', message, ref];
+  const name = await git(worktreePath, ['config', 'user.name'], { reject: false });
+  if (!name.stdout.trim())
+    args.unshift('-c', 'user.name=agent-kanban', '-c', 'user.email=agent-kanban@localhost');
+  const r = await git(worktreePath, args, { reject: false });
+  if (r.exitCode === 0) return { merged: true, conflicts: [], refCommit };
+  const conflicts = await conflictedFiles(worktreePath);
+  if (conflicts.length === 0) {
+    await git(worktreePath, ['merge', '--abort'], { reject: false });
+    throw new CoreError('GIT_ERROR', `merge of ${ref} failed: ${(r.stdout + r.stderr).trim()}`);
+  }
+  return { merged: false, conflicts, refCommit };
+}
+
+/** Diff between two refs of a repository (used for merged attempts whose worktree is gone). */
+export async function diffRefs(
+  repoPath: string,
+  from: string,
+  to: string,
+  exclude: string[] = [],
+): Promise<DiffResult> {
+  const spec = pathspec(exclude);
+  const numstat = await git(repoPath, ['diff', '--numstat', '-M', `${from}..${to}`, ...spec]);
+  const nameStatus = await git(repoPath, ['diff', '--name-status', '-M', `${from}..${to}`, ...spec]);
+  const patch = await git(repoPath, ['diff', '-M', '--no-color', `${from}..${to}`, ...spec]);
+  return parseDiffOutput(numstat.stdout, nameStatus.stdout, patch.stdout);
+}
+
+/** URL of the `origin` remote, or null. */
+export async function remoteUrl(repoPath: string, name = 'origin'): Promise<string | null> {
+  const r = await git(repoPath, ['remote', 'get-url', name], { reject: false });
+  return r.exitCode === 0 ? r.stdout.trim() : null;
 }
 
 export interface RepoConfig {

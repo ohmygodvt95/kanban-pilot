@@ -31,6 +31,20 @@ prompt = `${markers.join(' ')}\n${prompt}`;
 const emit = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// FAKE:nosession — a resumed session is "gone": mimic Claude's behaviour (stderr + error result + exit 1)
+if (resumeIdx >= 0 && (prompt.includes('FAKE:nosession') || history.includes('FAKE:nosession'))) {
+  process.stderr.write(`No conversation found with session ID: ${sessionId}\n`);
+  emit({
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    session_id: sessionId,
+    num_turns: 0,
+    total_cost_usd: 0,
+  });
+  process.exit(1);
+}
+
 emit({ type: 'system', subtype: 'init', session_id: sessionId, cwd: process.cwd(), tools: ['Write'] });
 emit({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' }, session_id: sessionId });
 

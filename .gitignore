@@ -8,3 +8,5 @@ coverage/
 packages/cli/web/
 packages/cli/templates/
 packages/cli/README.md
+e2e/.state.json
+packages/web/test-results/

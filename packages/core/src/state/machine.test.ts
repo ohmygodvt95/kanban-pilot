@@ -128,7 +128,9 @@ describe('state machine: DOING', () => {
       decide(ctx('doing', 'queued', { activeAttempt: attempt }), 'doing', 'system', { substate: 'error' })
         .kind,
     ).toBe('set');
-    expectInvalid(() => decide(ctx('doing', 'running'), 'doing', 'system', { substate: 'queued' }));
+    // running → queued is used when a run is replaced by a fallback run (session lost)
+    expect(decide(ctx('doing', 'running'), 'doing', 'system', { substate: 'queued' }).kind).toBe('set');
+    expectInvalid(() => decide(ctx('doing', 'queued'), 'doing', 'system', { substate: 'waiting_feedback' }));
     expectInvalid(() => decide(ctx('doing', 'running'), 'doing', 'system', { substate: 'pending' }));
   });
   it('system moves to REVIEW with pending/tests_failed', () => {

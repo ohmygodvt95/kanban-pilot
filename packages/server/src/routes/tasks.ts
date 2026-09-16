@@ -49,6 +49,15 @@ export function taskRoutes(core: Core) {
 
   app.post('/:id/attempts/restart', async (c) => c.json(await core.tasks.restartAttempt(c.req.param('id'))));
   app.post('/:id/attempts/discard', async (c) => c.json(await core.tasks.discardAttempt(c.req.param('id'))));
+  /** Merge the base branch into the attempt; conflicts are handed to the agent. */
+  app.post('/:id/attempts/update-base', async (c) =>
+    c.json(await core.tasks.updateFromBase(c.req.param('id'))),
+  );
+  /** Re-run the project's test script on the current attempt (async job). */
+  app.post('/:id/tests/run', async (c) => {
+    await core.tasks.runTests(c.req.param('id'));
+    return c.json({ ok: true });
+  });
 
   return app;
 }

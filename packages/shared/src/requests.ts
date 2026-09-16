@@ -1,9 +1,15 @@
 import { z } from 'zod';
-import { columnSchema, commentKindSchema, executorIdSchema } from './enums.js';
+import {
+  columnSchema,
+  commentKindSchema,
+  doneActionSchema,
+  executorIdSchema,
+  promptLanguageSchema,
+} from './enums.js';
 
-export const createProjectSchema = z.object({
+/** Fields shared by create and update. */
+const projectFieldsSchema = z.object({
   name: z.string().min(1).optional(),
-  repo_path: z.string().min(1),
   default_executor: executorIdSchema.optional(),
   base_branch: z.string().min(1).optional(),
   setup_script: z.string().nullable().optional(),
@@ -18,16 +24,34 @@ export const createProjectSchema = z.object({
     .max(24 * 60)
     .optional(),
   refinement_prompt: z.string().nullable().optional(),
+  /** Default model passed to the executor CLI (e.g. "sonnet"); null = CLI default. */
+  model: z.string().max(100).nullable().optional(),
+  /** Hard USD cap per run; null = unlimited. */
+  max_budget_usd: z.number().positive().max(10_000).nullable().optional(),
+  prompt_language: promptLanguageSchema.optional(),
+  execute_prompt: z.string().nullable().optional(),
+  followup_prompt: z.string().nullable().optional(),
+  done_action: doneActionSchema.optional(),
+});
+
+export const createProjectSchema = projectFieldsSchema.extend({
+  repo_path: z.string().min(1),
+  /**
+   * The repo's .agent-kanban.json may define setup/test scripts. They are only
+   * adopted when the caller explicitly accepts them (CONFIRM_REQUIRED otherwise).
+   */
+  accept_repo_scripts: z.boolean().optional(),
 });
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
-export const updateProjectSchema = createProjectSchema.omit({ repo_path: true }).partial();
+export const updateProjectSchema = projectFieldsSchema.partial();
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 
 export const createTaskSchema = z.object({
   title: z.string().min(1),
   description: z.string().default(''),
   executor: executorIdSchema.nullable().optional(),
+  model: z.string().max(100).nullable().optional(),
   skip_refinement: z.boolean().optional(),
   source_url: z.string().nullable().optional(),
 });
@@ -37,6 +61,7 @@ export const updateTaskSchema = z.object({
   title: z.string().min(1).optional(),
   description: z.string().optional(),
   executor: executorIdSchema.nullable().optional(),
+  model: z.string().max(100).nullable().optional(),
   skip_refinement: z.boolean().optional(),
   position: z.number().optional(),
   source_url: z.string().nullable().optional(),
@@ -75,6 +100,12 @@ export type ChatMessageInput = z.infer<typeof chatMessageSchema>;
 
 export const answerQuestionSchema = z.object({ answer: z.string().min(1) });
 export type AnswerQuestionInput = z.infer<typeof answerQuestionSchema>;
+
+export const importIssuesSchema = z.object({
+  /** External ids (issue numbers) to import as tasks. */
+  external_ids: z.array(z.string().min(1)).min(1).max(50),
+});
+export type ImportIssuesInput = z.infer<typeof importIssuesSchema>;
 
 export const apiErrorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }),

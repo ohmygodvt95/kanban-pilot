@@ -38,8 +38,25 @@
    BACKLOG/TODO → a `chat` run in refine mode that resumes the refinement session and may update `tasks.plan`.
    `runs.result_text` (the CLI's final text) is what the Chat tab shows as the agent's reply.
 
-Recovery on start: stale `running` jobs/runs from a dead process become `failed` (task → `DOING(error)`),
-`git worktree prune` runs per project and attempts whose worktree vanished are marked `discarded`.
+Processes are detached (`runner/process.ts`): a `sh` wrapper redirects the CLI to
+`<logs>/<run>/stdout.log|stderr.log` and writes `exit`; the runner tails the files. On start, `JobRunner.recover()`
+re-attaches to live pids (skipping already persisted lines), finalises runs whose `exit` file exists, and fails the
+rest. `git worktree prune` runs per project and attempts whose worktree vanished are marked `discarded`.
+
+Session-lost fallback: when an adapter's `classifyFailure()` reports `session_not_found`, the runner calls
+`TaskService.createFallbackRun()`, which creates a run without `--resume` (execute/followup: description + diff +
+feedback; refine/chat: full context) and re-points consumed comments to it. `runs.fallback_of_run_id` links the two.
+
+## Other flows
+
+- **Update from base** (`TaskService.updateFromBase`): `git merge <base>` inside the worktree; `attempts.base_commit`
+  moves to the base tip so diffs keep showing only the attempt's changes. Conflicts become a `chat` comment with the
+  conflict prompt and a followup run; `commitAll` then commits the merge.
+- **Queued chat**: `chat()` in DOING(queued|running) only inserts a `chat` comment; `PostRunPipeline` sends it as a
+  followup right after REVIEW is reached.
+- **Tests on demand**: job `run_tests` → `JobRunner.runTestsFor()`; `onTestsFinished` updates the REVIEW substate.
+- **done_action = pr**: `AttemptService.openPullRequest()` pushes and calls `IssueProvider.createPullRequest()`.
+- **Retention**: `Store.pruneRunEvents(days)` on start and daily.
 
 ## Adding an executor
 
@@ -51,10 +68,11 @@ Recovery on start: stale `running` jobs/runs from a dead process become `failed`
 4. If it cannot resume, set `supportsResume=false`; followups receive description + truncated diff + feedback.
 5. Capture a real stream fixture under `executors/__fixtures__/` and test `parseLine` against it.
 
-## Adding an issue provider (v2)
+## Adding an issue provider
 
-Implement `IssueProvider` (`providers/types.ts`) and register it in `providers/index.ts`. Tasks already carry
-`source_provider`, `source_external_id`, `source_url`.
+Implement `IssueProvider` (`providers/types.ts`: `check`, `detectProjectRef`, `listIssues`, `getIssue`,
+`syncStatus`, `addComment`, optional `createPullRequest`) and register it in `createDefaultProviders()`.
+`detectProvider()` picks the provider from the origin remote URL. GitHub (REST, `GITHUB_TOKEN`) is implemented.
 
 ## Testing strategy
 

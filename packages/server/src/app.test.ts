@@ -196,6 +196,34 @@ describe('HTTP API', () => {
     expect((await app.request(`/api/tasks/${slow.id}`)).status).toBe(404);
   });
 
+  it('exposes update-from-base, test re-run, provider status and script confirmation', async () => {
+    const t = await json<Task>(
+      await post(`/api/projects/${project.id}/tasks`, { title: 'routes', description: 'x' }),
+    );
+    await post(`/api/tasks/${t.id}/transition`, { target: 'todo' });
+    const reviewP = waitState(t.id, 'review');
+    await post(`/api/tasks/${t.id}/transition`, { target: 'doing' });
+    await reviewP;
+    const upd = await post(`/api/tasks/${t.id}/attempts/update-base`);
+    expect(upd.status).toBe(200);
+    expect((await json<{ conflicts: string[] }>(upd)).conflicts).toEqual([]);
+    expect((await post(`/api/tasks/${t.id}/tests/run`)).status).toBe(200);
+    await core.runner.idle();
+    // no origin remote → no provider
+    expect(await json<unknown>(await app.request(`/api/projects/${project.id}/provider`))).toBeNull();
+    expect((await app.request(`/api/projects/${project.id}/issues`)).status).toBe(409);
+    // scripts in .agent-kanban.json need confirmation
+    const repo2 = join(root, 'repo2');
+    await makeRepo(repo2);
+    await writeFile(join(repo2, '.agent-kanban.json'), JSON.stringify({ test_script: 'true' }));
+    const confirm = await post('/api/projects', { repo_path: repo2 });
+    expect(confirm.status).toBe(409);
+    const body = await json<{ error: { code: string; details: { test_script: string } } }>(confirm);
+    expect(body.error.code).toBe('CONFIRM_REQUIRED');
+    expect(body.error.details.test_script).toBe('true');
+    expect((await post('/api/projects', { repo_path: repo2, accept_repo_scripts: true })).status).toBe(201);
+  });
+
   it('serves the SPA with fallback and keeps /api JSON 404s', async () => {
     expect((await app.request('/api/nothing')).status).toBe(404);
     expect((await json<{ error: { code: string } }>(await app.request('/api/nothing'))).error.code).toBe(

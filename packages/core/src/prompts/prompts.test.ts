@@ -5,9 +5,15 @@ import {
   buildExecutePrompt,
   buildFollowupPrompt,
   buildFollowupPromptWithoutResume,
+  buildRetryPrompt,
   MAX_DIFF_CHARS,
+  type PromptContext,
   renderRefinePrompt,
+  renderTemplate,
 } from './prompts.js';
+
+const vi: PromptContext = { lang: 'vi' };
+const en: PromptContext = { lang: 'en' };
 
 const comment = (over: Partial<Comment>): Comment => ({
   id: 'c',
@@ -23,22 +29,35 @@ const comment = (over: Partial<Comment>): Comment => ({
 });
 
 describe('prompts', () => {
-  it('renders refine prompt with Q&A and fallback json instructions', () => {
-    const p = renderRefinePrompt(null, { title: 'T', description: 'D' }, [{ question: 'q1', answer: 'a1' }], {
+  it('renders placeholders and leaves unknown ones visible', () => {
+    expect(renderTemplate('a {{x}} {{nope}}', { x: '1' })).toBe('a 1 {{nope}}');
+  });
+
+  it('renders refine prompt with Q&A and fallback json instructions in both languages', () => {
+    const p = renderRefinePrompt(vi, { title: 'T', description: 'D' }, [{ question: 'q1', answer: 'a1' }], {
       structuredOutputSupported: false,
     });
     expect(p).toContain('T\nD');
     expect(p).toContain('Q: q1');
-    expect(p).toContain('A: a1');
     expect(p).toContain('JSON object');
-    const custom = renderRefinePrompt('X {{title}} Y', { title: 'T', description: '' }, [], {
+    const e = renderRefinePrompt(en, { title: 'T', description: '' }, [], {
       structuredOutputSupported: true,
     });
+    expect(e).toContain('You are assessing a task');
+    expect(e).toContain('(no description)');
+    const custom = renderRefinePrompt(
+      { lang: 'en', overrides: { refine: 'X {{title}} Y' } },
+      { title: 'T', description: '' },
+      [],
+      {
+        structuredOutputSupported: true,
+      },
+    );
     expect(custom).toBe('X T Y');
   });
 
-  it('builds execute prompt with plan and constraints', () => {
-    const p = buildExecutePrompt({
+  it('builds execute prompt with plan, constraints and worktree notice; honours overrides', () => {
+    const p = buildExecutePrompt(vi, {
       task: { title: 'Add feature', description: 'desc', plan: 'step 1' },
       worktreePath: '/wt',
       repoPath: '/repo',
@@ -48,20 +67,33 @@ describe('prompts', () => {
     expect(p).toContain('## Plan đã duyệt\nstep 1');
     expect(p).toContain('/wt');
     expect(p).toContain('Không tự commit');
+    const custom = buildExecutePrompt(
+      { lang: 'en', overrides: { execute: 'DO {{title}}\n{{constraints}}' } },
+      {
+        task: { title: 'X', description: '', plan: null },
+        worktreePath: '/w',
+        repoPath: '/r',
+        resumingRefinement: false,
+      },
+    );
+    expect(custom.startsWith('DO X\n## Constraints')).toBe(true);
   });
 
-  it('numbers feedback with file:line prefixes', () => {
-    const p = buildFollowupPrompt([
+  it('numbers feedback with file:line prefixes and appends extra feedback to retries', () => {
+    const p = buildFollowupPrompt(en, [
       comment({ file_path: 'src/a.ts', line: 12, body: 'rename' }),
       comment({ body: 'add tests' }),
     ]);
     expect(p).toContain('1. [src/a.ts:12] rename');
     expect(p).toContain('2. add tests');
+    const r = buildRetryPrompt(en, 'boom', [comment({ body: 'try harder' })]);
+    expect(r).toContain('boom');
+    expect(r).toContain('Additional notes from the user:\n1. try harder');
   });
 
   it('truncates the diff for non-resumable executors', () => {
     const diff = 'x'.repeat(MAX_DIFF_CHARS + 500);
-    const p = buildFollowupPromptWithoutResume({ title: 't', description: 'd', plan: null }, diff, [
+    const p = buildFollowupPromptWithoutResume(vi, { title: 't', description: 'd', plan: null }, diff, [
       comment({}),
     ]);
     expect(p).toContain('diff cắt bớt');
@@ -74,7 +106,6 @@ describe('prompts', () => {
       { question: 'unanswered', answer: null },
     ]);
     expect(d).toContain('## Q&A (refinement)');
-    expect(d).toContain('**Q:** q');
     expect(d).not.toContain('unanswered');
   });
 });

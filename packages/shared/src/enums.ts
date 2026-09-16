@@ -55,4 +55,12 @@ export const jobStatusSchema = z.enum(['queued', 'running', 'done', 'failed']);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
 export const providerIdSchema = z.enum(['github', 'gitlab', 'jira']);
+
+/** Language of the built-in prompts sent to agents. */
+export const promptLanguageSchema = z.enum(['vi', 'en']);
+export type PromptLanguage = z.infer<typeof promptLanguageSchema>;
+
+/** What REVIEW → DONE does: merge locally, or push + open a pull request. */
+export const doneActionSchema = z.enum(['merge', 'pr']);
+export type DoneAction = z.infer<typeof doneActionSchema>;
 export type ProviderId = z.infer<typeof providerIdSchema>;

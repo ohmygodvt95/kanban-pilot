@@ -2,10 +2,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { FolderGit2, Plus, Settings } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api/client';
+import { ApiError, api } from '../api/client';
 import { keys, useExecutors, useProjects } from '../api/queries';
 import { Shell } from '../components/Shell';
-import { Button, Card, EmptyState, Field, inputClass } from '../components/ui';
+import { Button, Card, EmptyState, Field, inputClass, Modal } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { EXECUTOR_LABELS } from '../lib/state';
 
@@ -15,19 +15,70 @@ export function ProjectsPage() {
   const toast = useToast();
   const [repoPath, setRepoPath] = useState('');
   const [name, setName] = useState('');
+  /** Scripts found in the repo's .agent-kanban.json awaiting the user's confirmation. */
+  const [pendingScripts, setPendingScripts] = useState<{
+    setup_script: string | null;
+    test_script: string | null;
+  } | null>(null);
   const create = useMutation({
-    mutationFn: () => api.projects.create({ repo_path: repoPath.trim(), name: name.trim() || undefined }),
+    mutationFn: (accept: boolean) =>
+      api.projects.create({
+        repo_path: repoPath.trim(),
+        name: name.trim() || undefined,
+        accept_repo_scripts: accept,
+      }),
     onSuccess: () => {
       setRepoPath('');
       setName('');
+      setPendingScripts(null);
       void qc.invalidateQueries({ queryKey: keys.projects });
       toast.push({ kind: 'success', text: 'Project added' });
     },
-    onError: (err) => toast.error(err, 'Cannot add project'),
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'CONFIRM_REQUIRED') {
+        setPendingScripts(err.details as { setup_script: string | null; test_script: string | null });
+        return;
+      }
+      toast.error(err, 'Cannot add project');
+    },
   });
 
   return (
     <Shell>
+      {pendingScripts ? (
+        <Modal
+          title="This repository ships scripts"
+          onClose={() => setPendingScripts(null)}
+          footer={
+            <>
+              <Button onClick={() => setPendingScripts(null)}>Cancel</Button>
+              <Button variant="primary" loading={create.isPending} onClick={() => create.mutate(true)}>
+                Adopt scripts & add project
+              </Button>
+            </>
+          }
+        >
+          <p className="mb-3 text-zinc-600 dark:text-zinc-300">
+            <span className="font-mono">.agent-kanban.json</span> defines commands that agent-kanban would run
+            on this machine (in worktrees). Only adopt them if you trust the repository; you can change them
+            later in Settings.
+          </p>
+          <dl className="grid gap-2 font-mono text-xs">
+            {pendingScripts.setup_script ? (
+              <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-800">
+                <dt className="text-zinc-500">setup_script</dt>
+                <dd>{pendingScripts.setup_script}</dd>
+              </div>
+            ) : null}
+            {pendingScripts.test_script ? (
+              <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-800">
+                <dt className="text-zinc-500">test_script</dt>
+                <dd>{pendingScripts.test_script}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </Modal>
+      ) : null}
       <div className="mx-auto max-w-5xl p-6">
         <div className="mb-6">
           <h1 className="font-semibold text-2xl tracking-tight">Projects</h1>
@@ -96,7 +147,7 @@ export function ProjectsPage() {
               className="grid gap-3"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (repoPath.trim()) create.mutate();
+                if (repoPath.trim()) create.mutate(false);
               }}
             >
               <Field

@@ -112,7 +112,7 @@ export function TaskDrawer({
               ) : null}
               {tab === 'tests' ? (
                 <div className="scrollbar-thin h-full overflow-y-auto">
-                  <TestsTab task={t} />
+                  <TestsTab task={t} project={project} />
                 </div>
               ) : null}
             </div>

@@ -1,22 +1,33 @@
-import type { Attempt, Column, Comment, Project, Task, TaskDetail } from '@agent-kanban/shared';
-
-type TaskPatch = Omit<Task, 'total_cost_usd' | 'unconsumed_feedback'>;
-
+/**
+ * Task use-cases. `transition()` is the single entry point for column changes:
+ * it validates via the pure state machine (machine.ts), applies side effects,
+ * persists and emits. Everything else here (chat, restart, update-from-base…)
+ * ends up calling `transition()` rather than touching columns directly.
+ */
+import type { Attempt, Column, Comment, Project, Run, Task, TaskDetail } from '@agent-kanban/shared';
 import type { AttemptService } from '../attempts/attempts.js';
 import type { CoreContext } from '../context.js';
 import { getExecutor } from '../executors/registry.js';
+import { remoteUrl } from '../git/git.js';
 import {
   buildExecutePrompt,
   buildFollowupPrompt,
   buildFollowupPromptWithoutResume,
   buildPlannerChatPrompt,
+  buildResolveConflictsPrompt,
   buildRetryPrompt,
+  type PromptContext,
+  renderRefinePrompt,
 } from '../prompts/prompts.js';
+import { detectProvider } from '../providers/index.js';
 import type { RefinementService } from '../refinement/refinement.js';
 import type { JobRunner } from '../runner/runner.js';
-import type { RunService } from '../runs/runs.js';
+import type { RunService, RunTestsJobPayload } from '../runs/runs.js';
 import { CoreError, errorMessage } from '../util/errors.js';
 import { type Actor, type Decision, decide, type TransitionPayload } from './machine.js';
+
+/** Task columns that may be written by services (computed fields excluded). */
+type TaskPatch = Omit<Task, 'total_cost_usd' | 'unconsumed_feedback'>;
 
 export interface TaskServiceDeps {
   attempts: AttemptService;
@@ -29,23 +40,35 @@ export interface CreateTaskInput {
   title: string;
   description?: string;
   executor?: Task['executor'];
+  model?: string | null;
   skip_refinement?: boolean;
   source_url?: string | null;
+  source_provider?: Task['source_provider'];
+  source_external_id?: string | null;
 }
 
 export interface UpdateTaskInput {
   title?: string;
   description?: string;
   executor?: Task['executor'];
+  model?: string | null;
   skip_refinement?: boolean;
   position?: number;
   source_url?: string | null;
 }
 
-/**
- * Task use-cases. `transition` is the single entry point for column changes:
- * it validates via the pure state machine, applies side effects, persists and emits.
- */
+/** Prompt language + template overrides for a project. */
+export function promptContext(project: Project): PromptContext {
+  return {
+    lang: project.prompt_language,
+    overrides: {
+      execute: project.execute_prompt,
+      followup: project.followup_prompt,
+      refine: project.refinement_prompt,
+    },
+  };
+}
+
 export class TaskService {
   constructor(
     private readonly ctx: CoreContext,
@@ -56,7 +79,10 @@ export class TaskService {
     return this.ctx.store;
   }
 
-  // ---- CRUD -----------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // CRUD
+  // ---------------------------------------------------------------------------
+
   async create(projectId: string, input: CreateTaskInput): Promise<Task> {
     const project = await this.store.getProject(projectId);
     const position = await this.store.nextPosition(project.id, 'backlog');
@@ -68,23 +94,26 @@ export class TaskService {
       substate: 'draft',
       position,
       executor: input.executor ?? null,
+      model: input.model ?? null,
       skip_refinement: input.skip_refinement ?? false,
       source_url: input.source_url ?? null,
+      source_provider: input.source_provider ?? null,
+      source_external_id: input.source_external_id ?? null,
     });
   }
 
   async update(id: string, input: UpdateTaskInput): Promise<Task> {
     const task = await this.store.getTask(id);
-    if ((input.title !== undefined || input.description !== undefined) && (await this.hasActiveRun(id))) {
+    const editsText = input.title !== undefined || input.description !== undefined;
+    if (editsText && (await this.hasActiveRun(id))) {
       throw new CoreError('CONFLICT', 'cannot edit title/description while a run is active');
     }
-    if (task.column === 'done' && (input.title !== undefined || input.description !== undefined)) {
-      throw new CoreError('CONFLICT', 'DONE tasks are immutable');
-    }
+    if (task.column === 'done' && editsText) throw new CoreError('CONFLICT', 'DONE tasks are immutable');
     const patch: Partial<TaskPatch> = {};
     if (input.title !== undefined) patch.title = input.title;
     if (input.description !== undefined) patch.description = input.description;
     if (input.executor !== undefined) patch.executor = input.executor;
+    if (input.model !== undefined) patch.model = input.model;
     if (input.skip_refinement !== undefined) patch.skip_refinement = input.skip_refinement;
     if (input.position !== undefined) patch.position = input.position;
     if (input.source_url !== undefined) patch.source_url = input.source_url;
@@ -114,6 +143,7 @@ export class TaskService {
       substate: 'draft',
       position,
       executor: task.executor,
+      model: task.model,
       skip_refinement: task.skip_refinement,
       plan: task.plan,
       source_url: task.source_url,
@@ -132,7 +162,10 @@ export class TaskService {
     return { ...task, current_attempt, attempts, runs, comments, questions };
   }
 
-  // ---- comments -------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // comments
+  // ---------------------------------------------------------------------------
+
   async addComment(
     taskId: string,
     input: { kind: Comment['kind']; body: string; file_path?: string | null; line?: number | null },
@@ -155,7 +188,10 @@ export class TaskService {
     await this.store.deleteComment(commentId);
   }
 
-  // ---- helpers --------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // helpers
+  // ---------------------------------------------------------------------------
+
   async hasActiveRun(taskId: string): Promise<boolean> {
     return (await this.store.activeRuns(taskId)).length > 0;
   }
@@ -166,11 +202,30 @@ export class TaskService {
     return a && a.status === 'active' ? a : null;
   }
 
-  private async executorFor(task: Task, project: Project) {
+  private executorFor(task: Task, project: Project) {
     return getExecutor(this.ctx.executors, task.executor ?? project.default_executor);
   }
 
-  // ---- transition -----------------------------------------------------------
+  /** Followup prompt for an attempt: resume the last session if the executor can, else description + diff. */
+  private async followupPrompt(task: Task, project: Project, attempt: Attempt, feedback: Comment[]) {
+    const ctx = promptContext(project);
+    const adapter = getExecutor(this.ctx.executors, attempt.executor);
+    const lastSession = adapter.supportsResume ? await this.store.lastSessionRun(attempt.id) : null;
+    const prompt = lastSession
+      ? buildFollowupPrompt(ctx, feedback)
+      : buildFollowupPromptWithoutResume(
+          ctx,
+          task,
+          (await this.deps.attempts.diff(attempt, project)).patch,
+          feedback,
+        );
+    return { prompt, resumeSessionId: lastSession?.session_id ?? null };
+  }
+
+  // ---------------------------------------------------------------------------
+  // transition
+  // ---------------------------------------------------------------------------
+
   async transition(
     taskId: string,
     target: Column,
@@ -197,8 +252,7 @@ export class TaskService {
       'transition',
     );
     const positionPatch = payload.position !== undefined ? { position: payload.position } : {};
-    const updated = await this.apply(task, project, activeAttempt, decision, payload, positionPatch, target);
-    return updated;
+    return this.apply(task, project, activeAttempt, decision, payload, positionPatch);
   }
 
   private async apply(
@@ -208,7 +262,6 @@ export class TaskService {
     decision: Decision,
     payload: TransitionPayload,
     positionPatch: { position?: number },
-    target: Column,
   ): Promise<Task> {
     const extra: Partial<TaskPatch> = { ...positionPatch };
     if (payload.plan !== undefined) extra.plan = payload.plan;
@@ -254,22 +307,14 @@ export class TaskService {
         if (!activeAttempt)
           throw new CoreError('INVALID_TRANSITION', 'no active attempt to send feedback to');
         const feedback = await this.store.unconsumedFeedback(task.id);
-        const adapter = getExecutor(this.ctx.executors, activeAttempt.executor);
-        const lastSession = adapter.supportsResume ? await this.store.lastSessionRun(activeAttempt.id) : null;
-        const prompt = lastSession
-          ? buildFollowupPrompt(feedback)
-          : buildFollowupPromptWithoutResume(
-              task,
-              (await this.deps.attempts.diff(activeAttempt)).patch,
-              feedback,
-            );
+        const { prompt, resumeSessionId } = await this.followupPrompt(task, project, activeAttempt, feedback);
         const run = await this.deps.runs.create({
           task,
           attempt: activeAttempt,
           kind: 'followup',
           executor: activeAttempt.executor,
           prompt,
-          resumeSessionId: lastSession?.session_id ?? null,
+          resumeSessionId,
         });
         await this.store.markCommentsConsumed(
           feedback.map((c) => c.id),
@@ -283,14 +328,16 @@ export class TaskService {
 
       case 'retry': {
         if (!activeAttempt) throw new CoreError('INVALID_TRANSITION', 'no active attempt to retry');
+        const ctx = promptContext(project);
         const adapter = getExecutor(this.ctx.executors, activeAttempt.executor);
         const lastSession = adapter.supportsResume ? await this.store.lastSessionRun(activeAttempt.id) : null;
-        const runs = await this.store.listRuns(task.id);
-        const lastRun = [...runs].reverse().find((r) => r.attempt_id === activeAttempt.id);
+        const lastRun = [...(await this.store.listRuns(task.id))]
+          .reverse()
+          .find((r) => r.attempt_id === activeAttempt.id);
         const feedback = await this.store.unconsumedFeedback(task.id);
         const prompt = lastSession
-          ? buildRetryPrompt(lastRun?.error_message ?? task.last_error, feedback)
-          : buildExecutePrompt({
+          ? buildRetryPrompt(ctx, lastRun?.error_message ?? task.last_error, feedback)
+          : buildExecutePrompt(ctx, {
               task,
               worktreePath: activeAttempt.worktree_path,
               repoPath: project.repo_path,
@@ -314,7 +361,25 @@ export class TaskService {
 
       case 'merge': {
         if (!activeAttempt) throw new CoreError('INVALID_TRANSITION', 'no active attempt to merge');
-        await this.deps.attempts.merge(task, activeAttempt, project);
+        if (project.done_action === 'pr') {
+          const detected = detectProvider(this.ctx.providers, await remoteUrl(project.repo_path));
+          if (!detected)
+            throw new CoreError(
+              'CONFLICT',
+              'done_action is "pr" but the origin remote is not hosted by a supported provider (GitHub)',
+            );
+          const check = await detected.provider.check();
+          if (!check.ok) throw new CoreError('CONFLICT', check.message ?? 'provider is not configured');
+          await this.deps.attempts.openPullRequest(
+            task,
+            activeAttempt,
+            project,
+            detected.provider,
+            detected.projectRef,
+          );
+        } else {
+          await this.deps.attempts.merge(task, activeAttempt, project);
+        }
         return this.store.setTaskState(task.id, 'done', null, { ...extra, ...(await positionFor('done')) });
       }
 
@@ -328,16 +393,16 @@ export class TaskService {
         });
       }
     }
-    throw new CoreError('INTERNAL', `unhandled decision for ${target}`);
   }
 
+  /** Create attempt (worktree + branch) and the initial execute run. */
   private async startAttempt(
     task: Task,
     project: Project,
     extra: Partial<TaskPatch>,
     opts: { previousFeedback?: Comment[] } = {},
   ): Promise<Task> {
-    const adapter = await this.executorFor(task, project);
+    const adapter = this.executorFor(task, project);
     const attempt = await this.deps.attempts.create(task, project, adapter.id);
     // Resume the refinement session only for a fresh (non-restart) attempt with the same executor.
     const refineRun = task.refinement_session_id ? await this.store.lastRefineRun(task.id) : null;
@@ -346,7 +411,7 @@ export class TaskService {
       adapter.supportsResume &&
       !!task.refinement_session_id &&
       refineRun?.executor === adapter.id;
-    const prompt = buildExecutePrompt({
+    const prompt = buildExecutePrompt(promptContext(project), {
       task,
       worktreePath: attempt.worktree_path,
       repoPath: project.repo_path,
@@ -370,11 +435,15 @@ export class TaskService {
     return this.store.setTaskState(task.id, 'doing', 'queued', { ...extra, current_attempt_id: attempt.id });
   }
 
-  // ---- chat -----------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // chat
+  // ---------------------------------------------------------------------------
+
   /**
-   * Send a free-form message to the agent. In REVIEW / DOING(error) it becomes
-   * feedback and resumes the attempt's session (followup / retry). In BACKLOG / TODO
-   * it chats with the planner (read-only refine session) and may update the plan.
+   * Send a free-form message to the agent.
+   *  - REVIEW / DOING(error): becomes feedback and resumes the attempt's session (followup / retry).
+   *  - DOING(queued|running): queued; the post-run pipeline sends it as soon as the run ends.
+   *  - BACKLOG / TODO: chats with the planner (read-only refine session) and may update the plan.
    */
   async chat(taskId: string, message: string): Promise<Task> {
     const task = await this.store.getTask(taskId);
@@ -382,13 +451,22 @@ export class TaskService {
     if (!body) throw new CoreError('VALIDATION', 'message is empty');
     if (task.column === 'done')
       throw new CoreError('INVALID_TRANSITION', 'DONE tasks are immutable; clone the task to continue');
-    if (await this.hasActiveRun(taskId)) {
-      throw new CoreError(
-        'CONFLICT',
-        'the agent is still running; wait for it to finish or cancel the run first',
-      );
-    }
     const project = await this.store.getProject(task.project_id);
+
+    if (task.column === 'doing' && task.substate !== 'error') {
+      // Agent busy in the worktree → queue; delivered by PostRunPipeline once the run finishes.
+      if (!(await this.activeAttempt(task))) throw new CoreError('CONFLICT', 'task has no active attempt');
+      await this.store.insertComment({
+        task_id: task.id,
+        attempt_id: task.current_attempt_id,
+        kind: 'chat',
+        body,
+      });
+      return this.store.getTask(taskId);
+    }
+    if (await this.hasActiveRun(taskId)) {
+      throw new CoreError('CONFLICT', 'the planner is still answering; wait for it to finish');
+    }
 
     if (task.column === 'review' || (task.column === 'doing' && task.substate === 'error')) {
       if (!(await this.activeAttempt(task))) throw new CoreError('CONFLICT', 'task has no active attempt');
@@ -403,38 +481,36 @@ export class TaskService {
         : this.transition(taskId, 'doing', 'user', { action: 'retry' });
     }
 
-    if (task.column === 'backlog' || task.column === 'todo') {
-      const adapter = await this.executorFor(task, project);
-      const comment = await this.store.insertComment({
-        task_id: task.id,
-        attempt_id: null,
-        kind: 'chat',
-        body,
-      });
-      const qa = await this.store.listQuestions(task.id);
-      const resume = adapter.supportsResume && !!task.refinement_session_id;
-      const prompt = buildPlannerChatPrompt(task, body, qa, {
-        structuredOutputSupported: adapter.supportsStructuredOutput,
-        resuming: resume,
-      });
-      const run = await this.deps.runs.create({
-        task,
-        attempt: null,
-        kind: 'chat',
-        executor: adapter.id,
-        prompt,
-        resumeSessionId: resume ? task.refinement_session_id : null,
-      });
-      await this.store.markCommentsConsumed([comment.id], run.id);
-      return this.store.touchTask(taskId);
-    }
-    throw new CoreError(
-      'INVALID_TRANSITION',
-      `chat is not available while the task is ${task.column}/${task.substate}`,
-    );
+    // backlog / todo → planner chat
+    const adapter = this.executorFor(task, project);
+    const comment = await this.store.insertComment({
+      task_id: task.id,
+      attempt_id: null,
+      kind: 'chat',
+      body,
+    });
+    const qa = await this.store.listQuestions(task.id);
+    const resume = adapter.supportsResume && !!task.refinement_session_id;
+    const prompt = buildPlannerChatPrompt(promptContext(project), task, body, qa, {
+      structuredOutputSupported: adapter.supportsStructuredOutput,
+      resuming: resume,
+    });
+    const run = await this.deps.runs.create({
+      task,
+      attempt: null,
+      kind: 'chat',
+      executor: adapter.id,
+      prompt,
+      resumeSessionId: resume ? task.refinement_session_id : null,
+    });
+    await this.store.markCommentsConsumed([comment.id], run.id);
+    return this.store.touchTask(taskId);
   }
 
-  // ---- attempt actions ------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // attempt actions
+  // ---------------------------------------------------------------------------
+
   /** Discard current attempt and start a fresh one with all previous feedback in the prompt. */
   async restartAttempt(taskId: string): Promise<Task> {
     const task = await this.store.getTask(taskId);
@@ -468,22 +544,67 @@ export class TaskService {
     });
   }
 
+  /**
+   * Merge the base branch into the attempt. Without conflicts the task stays where
+   * it is; with conflicts a followup run asks the agent to resolve them.
+   */
+  async updateFromBase(taskId: string): Promise<{ task: Task; conflicts: string[] }> {
+    const task = await this.store.getTask(taskId);
+    if (!(task.column === 'review' || (task.column === 'doing' && task.substate === 'error'))) {
+      throw new CoreError('INVALID_TRANSITION', 'Update from base is available in REVIEW or DOING(error)');
+    }
+    if (await this.hasActiveRun(taskId))
+      throw new CoreError('INVALID_TRANSITION', 'cancel the running agent first');
+    const attempt = await this.activeAttempt(task);
+    if (!attempt) throw new CoreError('CONFLICT', 'task has no active attempt');
+    const project = await this.store.getProject(task.project_id);
+    const res = await this.deps.attempts.updateFromBase(attempt, project);
+    if (res.merged) return { task: await this.store.touchTask(taskId), conflicts: [] };
+    // Conflicts: hand them to the agent as feedback (rendered as item 1 of the followup prompt).
+    await this.store.insertComment({
+      task_id: task.id,
+      attempt_id: attempt.id,
+      kind: 'chat',
+      body: buildResolveConflictsPrompt(promptContext(project), project.base_branch, res.conflicts),
+    });
+    const updated =
+      task.column === 'review'
+        ? await this.transition(taskId, 'doing', 'user')
+        : await this.transition(taskId, 'doing', 'user', { action: 'retry' });
+    return { task: updated, conflicts: res.conflicts };
+  }
+
+  /** Re-run the project's test script on the current attempt (job `run_tests`). */
+  async runTests(taskId: string): Promise<void> {
+    const task = await this.store.getTask(taskId);
+    const attempt = await this.activeAttempt(task);
+    if (!attempt) throw new CoreError('CONFLICT', 'task has no active attempt');
+    const project = await this.store.getProject(task.project_id);
+    if (!project.test_script?.trim()) throw new CoreError('VALIDATION', 'the project has no test script');
+    if (await this.hasActiveRun(taskId))
+      throw new CoreError('CONFLICT', 'wait for the running agent to finish');
+    const payload: RunTestsJobPayload = { attemptId: attempt.id, taskId: task.id, projectId: project.id };
+    await this.store.enqueueJob('run_tests', payload);
+  }
+
   /** Cancel a run: kill the process if running, or drop it from the queue. */
   async cancelRun(runId: string): Promise<void> {
     const run = await this.store.getRun(runId);
     if (run.status === 'running') {
       if (!this.deps.runner().cancelRun(runId)) {
-        // Not owned by this process (stale) → finalise directly.
-        const failed = await this.store.updateRun(runId, {
+        // Not supervised by this process → kill by pid if we know it, then finalise directly.
+        if (run.pid) {
+          const { killTree } = await import('../runner/process.js');
+          killTree(run.pid, 'SIGTERM');
+        }
+        const cancelled = await this.store.updateRun(runId, {
           status: 'cancelled',
           error_message: 'cancelled by user',
           finished_at: new Date().toISOString(),
+          pid: null,
         });
-        await this.store.enqueueJob('post_run', {
-          runId: failed.id,
-          taskId: failed.task_id,
-          projectId: (await this.store.getTask(failed.task_id)).project_id,
-        });
+        const task = await this.store.getTask(cancelled.task_id);
+        await this.store.enqueueJob('post_run', { runId, taskId: task.id, projectId: task.project_id });
       }
       return;
     }
@@ -498,5 +619,116 @@ export class TaskService {
       return;
     }
     throw new CoreError('CONFLICT', `run is already ${run.status}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // session-lost fallback (called by the runner)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * `failed` could not resume its session. Create an equivalent run that starts a
+   * fresh session with enough context, re-pointing consumed comments to it.
+   * Returns false when nothing sensible can be done (caller then fails the task).
+   */
+  async createFallbackRun(failed: Run): Promise<boolean> {
+    const task = await this.store.getTask(failed.task_id);
+    const project = await this.store.getProject(task.project_id);
+    const ctx = promptContext(project);
+    const attempt = failed.attempt_id ? await this.store.findAttempt(failed.attempt_id) : null;
+    const comments = await this.store.commentsConsumedBy(failed.id);
+    const requeue = async () => {
+      if (task.column === 'doing' && task.substate === 'running')
+        await this.transition(task.id, 'doing', 'system', { substate: 'queued' });
+    };
+    switch (failed.kind) {
+      case 'execute': {
+        if (attempt?.status !== 'active') return false;
+        const prompt = buildExecutePrompt(ctx, {
+          task,
+          worktreePath: attempt.worktree_path,
+          repoPath: project.repo_path,
+          resumingRefinement: false,
+        });
+        const run = await this.deps.runs.create({
+          task,
+          attempt,
+          kind: 'execute',
+          executor: failed.executor,
+          prompt,
+          fallbackOfRunId: failed.id,
+        });
+        await this.store.markCommentsConsumed(
+          comments.map((c) => c.id),
+          run.id,
+        );
+        await requeue();
+        return true;
+      }
+      case 'followup': {
+        if (attempt?.status !== 'active') return false;
+        const diff = (await this.deps.attempts.diff(attempt, project)).patch;
+        const prompt = comments.length
+          ? buildFollowupPromptWithoutResume(ctx, task, diff, comments)
+          : buildExecutePrompt(ctx, {
+              task,
+              worktreePath: attempt.worktree_path,
+              repoPath: project.repo_path,
+              resumingRefinement: false,
+            });
+        const run = await this.deps.runs.create({
+          task,
+          attempt,
+          kind: 'followup',
+          executor: failed.executor,
+          prompt,
+          fallbackOfRunId: failed.id,
+        });
+        await this.store.markCommentsConsumed(
+          comments.map((c) => c.id),
+          run.id,
+        );
+        await requeue();
+        return true;
+      }
+      case 'refine': {
+        const adapter = getExecutor(this.ctx.executors, failed.executor);
+        const prompt = renderRefinePrompt(ctx, task, await this.store.listQuestions(task.id), {
+          structuredOutputSupported: adapter.supportsStructuredOutput,
+        });
+        await this.deps.runs.create({
+          task,
+          attempt: null,
+          kind: 'refine',
+          executor: failed.executor,
+          prompt,
+          fallbackOfRunId: failed.id,
+        });
+        await this.store.updateTask(task.id, { refinement_session_id: null });
+        return true;
+      }
+      case 'chat': {
+        const adapter = getExecutor(this.ctx.executors, failed.executor);
+        const message = comments[0]?.body ?? '';
+        if (!message) return false;
+        const prompt = buildPlannerChatPrompt(ctx, task, message, await this.store.listQuestions(task.id), {
+          structuredOutputSupported: adapter.supportsStructuredOutput,
+          resuming: false,
+        });
+        const run = await this.deps.runs.create({
+          task,
+          attempt: null,
+          kind: 'chat',
+          executor: failed.executor,
+          prompt,
+          fallbackOfRunId: failed.id,
+        });
+        await this.store.markCommentsConsumed(
+          comments.map((c) => c.id),
+          run.id,
+        );
+        await this.store.updateTask(task.id, { refinement_session_id: null });
+        return true;
+      }
+    }
   }
 }

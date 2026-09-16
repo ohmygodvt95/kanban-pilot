@@ -16,20 +16,27 @@ Verified on **Claude Code 2.1.260** (`claude --help`, plus captured stream-json 
 | — | In `plan` permission mode the model may still call `Bash` for read-only commands even with `--allowedTools Read,Grep,Glob`; plan mode blocks writes, which is what matters for refinement. |
 | — | Resuming a refinement session (`plan` mode, cwd = repo) into an execute run (`bypassPermissions`, cwd = worktree) works, but the model remembers absolute paths of the main repo. The execute prompt therefore states the new worktree path and forbids touching the original repo path. |
 | — | Auth check: `claude auth status` is used when available; if it is missing the adapter only verifies the binary runs. |
+| — | `--model <alias>` and `--max-budget-usd <amount>` exist and are passed from project/task settings. `--effort` exists but is not exposed yet. |
+| — | Resuming an unknown session: exit 1, stderr `No conversation found with session ID: …`, a `result` event with `subtype: error_during_execution`, `num_turns: 0`. `classifyFailure()` maps this to `session_not_found` → automatic retry without `--resume`. |
 
 Env forwarded to the child: every `CLAUDE_CODE_*` and `ANTHROPIC_*` variable from the server's environment,
 plus `CLAUDE_CODE_ENTRYPOINT=agent-kanban`. No key is stored by agent-kanban.
 
-## Codex CLI (skeleton, not verified end-to-end)
+## Codex CLI (flags verified against codex-cli 0.154.0, not run end-to-end)
 
-`codex` was not installed on the development machine. The adapter follows the public docs:
-`codex exec --json --sandbox danger-full-access -` (prompt on stdin), resume via `codex exec resume --json <id> -`.
-Event mapping (`thread.started`, `item.completed`, `turn.completed`) is best-effort. Structured output is
-prompt-based (`supportsStructuredOutput=false`): the refinement prompt asks for a single JSON object which is
-extracted from the last assistant text. Verify with `codex exec --help` before relying on it.
+Installed locally to read `codex exec --help`; no OpenAI account was available, so runs were not exercised.
 
-## GitHub Copilot CLI (skeleton, not verified end-to-end)
+| Spec | Actual / decision |
+|---|---|
+| `codex exec --json --sandbox danger-full-access <prompt>` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access [-m model] -` — `-` reads the prompt from stdin. Refine runs use `--sandbox read-only`. |
+| resume `codex exec resume <id>` | `codex exec resume --json <thread_id> -` (confirmed subcommand and `[PROMPT]` with `-` = stdin). |
+| structured output | `--output-schema <FILE>` exists → `supportsStructuredOutput=true`; the runner writes the schema to `<logs>/<run>/output-schema.json` (`ExecutorInput.outputSchemaFile`). |
+| events | JSONL: `thread.started{thread_id}` (session id), `turn.started`, `item.completed{item}`, `turn.completed{usage}`, `error{message}`. Rust log lines (`… ERROR codex_api …`) are not JSON and are stored as `raw`. |
 
-`copilot` was not installed. Command: `copilot -p <prompt> --output-format json --autopilot --allow-all`.
-`supportsResume=false`, so followups send description + current `git diff` (truncated to 20k chars) + feedback.
-Verify with `copilot --help`.
+## GitHub Copilot CLI (flags verified against GitHub Copilot CLI 1.0.85, not run end-to-end)
+
+| Spec | Actual / decision |
+|---|---|
+| `copilot -p <prompt> --output-format json --autopilot --allow-all` | Confirmed. Refine runs use `--mode plan --allow-all-tools`. `--model <model>` and `-r <session>` (resume) exist → `supportsResume=true`. `--no-auto-update` is added. |
+| events | `--output-format json` is "JSONL, one JSON object per line" but the event vocabulary is undocumented; `parseLine` maps a few plausible shapes and keeps the rest as `raw`. Without credentials the CLI prints a plain-text auth error. |
+| structured output | No schema flag → prompt-based JSON extraction. |

@@ -1,28 +1,67 @@
-import type { Job, Run, RunEventType } from '@agent-kanban/shared';
+/**
+ * In-process job runner.
+ *
+ * Polls the `jobs` table, claims jobs atomically and executes them:
+ *   run_agent      spawn the executor CLI (detached, see process.ts), stream its
+ *                  events into run_events + the EventBus, finalise the run
+ *   setup_worktree run the project's setup script, then enqueue run_agent
+ *   post_run       hand over to the post-run pipeline
+ *   run_tests      re-run the project's test script for an attempt
+ *
+ * Agents survive a restart of agent-kanban: `recover()` re-attaches to still
+ * running pids and finalises runs whose process already ended.
+ */
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { Attempt, Job, Run, RunEventType } from '@agent-kanban/shared';
 import type { CoreContext } from '../context.js';
 import { getExecutor } from '../executors/registry.js';
-import type { ExecutorInput, NormalizedEvent } from '../executors/types.js';
+import type { ExecutorAdapter, ExecutorInput, NormalizedEvent } from '../executors/types.js';
 import { CHAT_SCHEMA, REFINE_SCHEMA } from '../prompts/prompts.js';
-import type { PostRunJobPayload, RunAgentJobPayload, SetupJobPayload } from '../runs/runs.js';
+import type {
+  PostRunJobPayload,
+  RunAgentJobPayload,
+  RunTestsJobPayload,
+  SetupJobPayload,
+} from '../runs/runs.js';
 import { errorMessage } from '../util/errors.js';
-import { type AgentProcess, formatCommand, isPidAlive, runScript, spawnAgent } from './process.js';
+import {
+  type AgentExit,
+  type AgentProcess,
+  attachAgent,
+  formatCommand,
+  isPidAlive,
+  LOG_FILES,
+  readExitFile,
+  runScript,
+  spawnAgent,
+} from './process.js';
 
 export interface RunnerHooks {
   /** Called when a run starts executing (task → DOING(running)). */
   onRunStarted(run: Run): Promise<void>;
-  /** Called after a run row is finalised; enqueues/executes post-run. */
+  /** Called after a run row is finalised; enqueues the post-run pipeline. */
   onRunFinished(run: Run): Promise<void>;
   /** Post-run pipeline entry. */
   postRun(payload: PostRunJobPayload): Promise<void>;
   /** Setup script failed → task DOING(error). */
   onSetupFailed(payload: SetupJobPayload, message: string): Promise<void>;
+  /**
+   * The CLI could not resume the session of `run`. Return true if a replacement
+   * run (without resume) was created, in which case `run` is closed quietly.
+   */
+  onSessionLost(run: Run): Promise<boolean>;
+  /** Test script finished for an attempt (from run_tests job or post-run). */
+  onTestsFinished(attempt: Attempt, ok: boolean): Promise<void>;
 }
 
 export interface RunnerOptions {
   pollIntervalMs?: number;
   setupTimeoutMs?: number;
+  testTimeoutMs?: number;
 }
 
+/** Map a normalised event to the coarse `run_events.type` column. */
 const eventTypeFor = (ev: NormalizedEvent): RunEventType => {
   switch (ev.type) {
     case 'init':
@@ -41,11 +80,13 @@ const eventTypeFor = (ev: NormalizedEvent): RunEventType => {
   }
 };
 
-/**
- * In-process job runner: polls the jobs table, claims jobs atomically and
- * executes them. `run_agent` jobs spawn the executor CLI and stream its
- * events into run_events + the EventBus.
- */
+/** Everything collected from a process's streams while supervising it. */
+interface Collected {
+  sessionId: string | null;
+  result: Extract<NormalizedEvent, { type: 'result' }> | null;
+  stderr: string[];
+}
+
 export class JobRunner {
   private timer: NodeJS.Timeout | null = null;
   private ticking = false;
@@ -55,6 +96,7 @@ export class JobRunner {
   readonly lockId = `pid:${process.pid}`;
   private readonly pollIntervalMs: number;
   private readonly setupTimeoutMs: number;
+  private readonly testTimeoutMs: number;
 
   constructor(
     private readonly ctx: CoreContext,
@@ -63,6 +105,7 @@ export class JobRunner {
   ) {
     this.pollIntervalMs = opts.pollIntervalMs ?? 500;
     this.setupTimeoutMs = opts.setupTimeoutMs ?? 15 * 60_000;
+    this.testTimeoutMs = opts.testTimeoutMs ?? 10 * 60_000;
   }
 
   start(): void {
@@ -73,19 +116,23 @@ export class JobRunner {
     void this.tick();
   }
 
+  /**
+   * Stop scheduling. Agent processes keep running unless `killProcesses` is set;
+   * a later `recover()` re-attaches to them.
+   */
   async stop(opts: { killProcesses?: boolean } = {}): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     if (opts.killProcesses) for (const p of this.processes.values()) p.kill(2000);
-    await Promise.allSettled([...this.inflight]);
+    if (opts.killProcesses) await Promise.allSettled([...this.inflight]);
   }
 
   get activeRunIds(): string[] {
     return [...this.processes.keys()];
   }
 
-  /** Kill a running agent process (SIGTERM → SIGKILL). Returns false if not running here. */
+  /** Kill a running agent process (SIGTERM → SIGKILL). Returns false if not supervised here. */
   cancelRun(runId: string): boolean {
     const p = this.processes.get(runId);
     if (!p) return false;
@@ -93,44 +140,41 @@ export class JobRunner {
     return true;
   }
 
-  /** Recover from a previous process: stale running jobs → failed, their runs → failed. */
-  async recoverStaleJobs(): Promise<{ jobs: number; runs: number }> {
-    let jobsReset = 0;
-    let runsFailed = 0;
+  /**
+   * Recover from a previous agent-kanban process:
+   *  - runs still `running` whose pid is alive are re-attached (their events continue);
+   *  - runs whose process already ended are finalised from the log files;
+   *  - anything else (no log dir, dead pid without exit file) fails with a clear message.
+   * Stale `running` jobs are closed; queued jobs are simply picked up again.
+   */
+  async recover(): Promise<{ attached: number; finalized: number; failed: number }> {
+    const stats = { attached: 0, finalized: 0, failed: 0 };
     for (const job of await this.ctx.store.runningJobs()) {
-      const pid = Number(job.locked_by?.replace('pid:', ''));
-      if (job.locked_by === this.lockId || (Number.isFinite(pid) && pid !== process.pid && isPidAlive(pid))) {
-        // Another live runner owns it (should not happen in v1) – leave it.
-        if (job.locked_by !== this.lockId) continue;
-      }
-      await this.ctx.store.finishJob(job.id, 'failed', { error: 'runner restarted' });
-      jobsReset++;
-      const payload = job.payload as Partial<RunAgentJobPayload>;
-      if (payload.runId && (job.kind === 'run_agent' || job.kind === 'setup_worktree')) {
-        const run = await this.ctx.store.findRun(payload.runId);
-        if (run && (run.status === 'running' || run.status === 'queued')) {
-          const failed = await this.ctx.store.updateRun(run.id, {
-            status: 'failed',
-            error_message: 'runner restarted while the agent was running',
-            finished_at: new Date().toISOString(),
-          });
-          runsFailed++;
-          await this.hooks.onRunFinished(failed);
-        }
-      }
+      if (job.locked_by === this.lockId) continue;
+      await this.ctx.store.finishJob(job.id, 'done', {
+        error: 'closed by recovery (previous process ended)',
+      });
     }
-    // Runs marked running with no job at all (crash between updates)
     for (const run of await this.ctx.store.listRunsByStatus(['running'])) {
       if (this.processes.has(run.id)) continue;
+      const logDir = run.log_dir;
+      const exitCode = logDir ? readExitFile(logDir) : undefined;
+      if (logDir && run.pid && (exitCode !== undefined || isPidAlive(run.pid))) {
+        this.track(this.attach(run, logDir, run.pid));
+        if (exitCode !== undefined) stats.finalized++;
+        else stats.attached++;
+        continue;
+      }
       const failed = await this.ctx.store.updateRun(run.id, {
         status: 'failed',
-        error_message: 'runner restarted while the agent was running',
+        error_message: 'agent-kanban restarted and the agent process could not be found',
         finished_at: new Date().toISOString(),
+        pid: null,
       });
-      runsFailed++;
+      stats.failed++;
       await this.hooks.onRunFinished(failed);
     }
-    return { jobs: jobsReset, runs: runsFailed };
+    return stats;
   }
 
   /** One scheduler pass. Public for tests. */
@@ -178,13 +222,16 @@ export class JobRunner {
     try {
       switch (job.kind) {
         case 'run_agent':
-          await this.runAgent(job, job.payload as RunAgentJobPayload);
+          await this.runAgent(job.payload as RunAgentJobPayload);
           break;
         case 'setup_worktree':
           await this.setupWorktree(job, job.payload as SetupJobPayload);
           break;
         case 'post_run':
           await this.hooks.postRun(job.payload as PostRunJobPayload);
+          break;
+        case 'run_tests':
+          await this.runTests(job.payload as RunTestsJobPayload);
           break;
         default:
           throw new Error(`unknown job kind ${job.kind}`);
@@ -218,6 +265,10 @@ export class JobRunner {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // setup / tests
+  // ---------------------------------------------------------------------------
+
   private async setupWorktree(job: Job, payload: SetupJobPayload): Promise<void> {
     const attempt = await this.ctx.store.getAttempt(payload.attemptId);
     this.ctx.logger.info({ attempt: attempt.id }, 'running setup script');
@@ -242,80 +293,167 @@ export class JobRunner {
     await this.ctx.store.enqueueJob('run_agent', runPayload satisfies RunAgentJobPayload);
   }
 
-  private async runAgent(_job: Job, payload: RunAgentJobPayload): Promise<void> {
+  /** Execute the project's test script in the attempt's worktree and store the result. */
+  async runTestsFor(attempt: Attempt, script: string): Promise<boolean> {
+    const res = await runScript(script, attempt.worktree_path, this.testTimeoutMs);
+    const updated = await this.ctx.store.updateAttempt(attempt.id, {
+      last_test_output: res.output,
+      last_test_ok: res.ok,
+    });
+    await this.hooks.onTestsFinished(updated, res.ok);
+    return res.ok;
+  }
+
+  private async runTests(payload: RunTestsJobPayload): Promise<void> {
+    const attempt = await this.ctx.store.getAttempt(payload.attemptId);
+    const project = await this.ctx.store.getProject(payload.projectId);
+    if (!project.test_script?.trim() || attempt.status !== 'active') return;
+    await this.runTestsFor(attempt, project.test_script);
+  }
+
+  // ---------------------------------------------------------------------------
+  // agent runs
+  // ---------------------------------------------------------------------------
+
+  /** Build the executor input for a run from project/task/attempt settings. */
+  private async buildInput(
+    run: Run,
+    adapter: ExecutorAdapter,
+  ): Promise<{ input: ExecutorInput; cwd: string; timeoutMs: number }> {
+    const store = this.ctx.store;
+    const task = await store.getTask(run.task_id);
+    const project = await store.getProject(task.project_id);
+    const attempt = run.attempt_id ? await store.getAttempt(run.attempt_id) : null;
+    const cwd = attempt?.worktree_path ?? project.repo_path;
+    const readOnly = run.kind === 'refine' || run.kind === 'chat';
+    const schema = run.kind === 'refine' ? REFINE_SCHEMA : run.kind === 'chat' ? CHAT_SCHEMA : undefined;
+    const input: ExecutorInput = {
+      cwd,
+      prompt: run.prompt,
+      mode: readOnly ? 'refine' : 'execute',
+      resumeSessionId:
+        adapter.supportsResume && run.resumed_from_session_id ? run.resumed_from_session_id : undefined,
+      outputSchema: adapter.supportsStructuredOutput ? schema : undefined,
+      model: task.model ?? project.model ?? undefined,
+      maxBudgetUsd: project.max_budget_usd ?? undefined,
+    };
+    if (input.outputSchema) {
+      // Some CLIs (Codex) only take a schema file; write it next to the run's logs.
+      const logDir = join(this.ctx.paths.logsRoot, run.id);
+      mkdirSync(logDir, { recursive: true });
+      const file = join(logDir, 'output-schema.json');
+      writeFileSync(file, JSON.stringify(input.outputSchema));
+      input.outputSchemaFile = file;
+    }
+    return { input, cwd, timeoutMs: project.run_timeout_minutes * 60_000 };
+  }
+
+  /** Stream handlers shared by spawn and attach: persist events and collect what finalisation needs. */
+  private streamHandlers(run: Run, adapter: ExecutorAdapter, collected: Collected) {
+    const store = this.ctx.store;
+    let queue: Promise<void> = Promise.resolve();
+    const persist = (type: RunEventType, payload: unknown) => {
+      queue = queue
+        .then(() => store.appendRunEvent(run, type, payload).then(() => undefined))
+        .catch((err) => this.ctx.logger.error({ err: errorMessage(err) }, 'failed to persist run event'));
+      return queue;
+    };
+    return {
+      onStdoutLine: (line: string) => {
+        const parsed = adapter.parseLine(line);
+        if (!parsed) return;
+        for (const ev of Array.isArray(parsed) ? parsed : [parsed]) {
+          if (ev.type === 'init') collected.sessionId = ev.sessionId;
+          if (ev.type === 'result') {
+            collected.result = ev;
+            if (ev.sessionId) collected.sessionId = ev.sessionId;
+          }
+          if (ev.type === 'stderr') collected.stderr.push(ev.text);
+          void persist(eventTypeFor(ev), ev);
+        }
+      },
+      onStderrLine: (line: string) => {
+        if (!line.trim()) return;
+        collected.stderr.push(line);
+        void persist('stderr', { type: 'stderr', text: line, raw: line });
+      },
+      flush: () => queue,
+    };
+  }
+
+  private async runAgent(payload: RunAgentJobPayload): Promise<void> {
     const store = this.ctx.store;
     let run = await store.getRun(payload.runId);
     if (run.status !== 'queued') {
       this.ctx.logger.info({ run: run.id, status: run.status }, 'skipping run (not queued)');
       return;
     }
-    const task = await store.getTask(run.task_id);
-    const project = await store.getProject(task.project_id);
-    const attempt = run.attempt_id ? await store.getAttempt(run.attempt_id) : null;
-    const executorId = attempt?.executor ?? task.executor ?? project.default_executor;
-    const adapter = getExecutor(this.ctx.executors, executorId);
-    const cwd = attempt?.worktree_path ?? project.repo_path;
-
-    const input: ExecutorInput = {
-      cwd,
-      prompt: run.prompt,
-      mode: run.kind === 'refine' || run.kind === 'chat' ? 'refine' : 'execute',
-      resumeSessionId:
-        adapter.supportsResume && run.resumed_from_session_id ? run.resumed_from_session_id : undefined,
-      outputSchema: !adapter.supportsStructuredOutput
-        ? undefined
-        : run.kind === 'refine'
-          ? REFINE_SCHEMA
-          : run.kind === 'chat'
-            ? CHAT_SCHEMA
-            : undefined,
-    };
+    const adapter = getExecutor(this.ctx.executors, run.executor);
+    const { input, cwd, timeoutMs } = await this.buildInput(run, adapter);
     const command = adapter.buildCommand(input);
+    const logDir = join(this.ctx.paths.logsRoot, run.id);
     run = await store.updateRun(run.id, {
       status: 'running',
       command: formatCommand(command),
+      log_dir: logDir,
       started_at: new Date().toISOString(),
     });
     await this.hooks.onRunStarted(run);
 
-    let sessionId: string | null = null;
-    let result: Extract<NormalizedEvent, { type: 'result' }> | null = null;
-    let queue: Promise<void> = Promise.resolve();
-    const enqueueEvent = (type: RunEventType, payload: unknown) => {
-      queue = queue
-        .then(() => store.appendRunEvent(run, type, payload).then(() => undefined))
-        .catch((err) => {
-          this.ctx.logger.error({ err: errorMessage(err) }, 'failed to persist run event');
-        });
-    };
+    const collected: Collected = { sessionId: null, result: null, stderr: [] };
+    const handlers = this.streamHandlers(run, adapter, collected);
+    const proc = spawnAgent({ cwd, command, timeoutMs, logDir, logger: this.ctx.logger, ...handlers });
+    if (proc.pid) run = await store.updateRun(run.id, { pid: proc.pid });
+    this.processes.set(run.id, proc);
+    const exit = await proc.done;
+    this.processes.delete(run.id);
+    await handlers.flush();
+    await this.finalize(run, adapter, exit, collected);
+  }
 
-    const proc = spawnAgent({
-      cwd,
-      command,
-      timeoutMs: project.run_timeout_minutes * 60_000,
+  /** Re-attach to a run started by a previous process (or finalise it if it already ended). */
+  private async attach(run: Run, logDir: string, pid: number): Promise<void> {
+    const store = this.ctx.store;
+    const adapter = getExecutor(this.ctx.executors, run.executor);
+    const collected: Collected = { sessionId: run.session_id, result: null, stderr: [] };
+    const handlers = this.streamHandlers(run, adapter, collected);
+    const skip = await store.countRunEventLines(run.id);
+    const task = await store.getTask(run.task_id);
+    const project = await store.getProject(task.project_id);
+    const elapsed = run.started_at ? Date.now() - new Date(run.started_at).getTime() : 0;
+    const timeoutMs = Math.max(30_000, project.run_timeout_minutes * 60_000 - elapsed);
+    this.ctx.logger.info(
+      { run: run.id, pid, skip },
+      existsSync(join(logDir, LOG_FILES.exit)) ? 'finalising run from logs' : 're-attaching to running agent',
+    );
+    const proc = attachAgent({
+      pid,
+      logDir,
+      skipStdoutLines: skip.stdout,
+      skipStderrLines: skip.stderr,
+      timeoutMs,
       logger: this.ctx.logger,
-      onStdoutLine: (line) => {
-        const parsed = adapter.parseLine(line);
-        if (!parsed) return;
-        for (const ev of Array.isArray(parsed) ? parsed : [parsed]) {
-          if (ev.type === 'init') sessionId = ev.sessionId;
-          if (ev.type === 'result') {
-            result = ev;
-            if (ev.sessionId) sessionId = ev.sessionId;
-          }
-          enqueueEvent(eventTypeFor(ev), ev);
-        }
-      },
-      onStderrLine: (line) => {
-        if (line.trim()) enqueueEvent('stderr', { type: 'stderr', text: line, raw: line });
-      },
+      ...handlers,
     });
     this.processes.set(run.id, proc);
     const exit = await proc.done;
     this.processes.delete(run.id);
-    await queue;
+    await handlers.flush();
+    await this.finalize(run, adapter, exit, collected);
+  }
 
-    const res = result as Extract<NormalizedEvent, { type: 'result' }> | null;
+  /** Derive the run status from the exit info + result event, persist it and notify hooks. */
+  private async finalize(
+    run: Run,
+    adapter: ExecutorAdapter,
+    exit: AgentExit,
+    collected: Collected,
+  ): Promise<void> {
+    const store = this.ctx.store;
+    const res = collected.result;
+    const task = await store.getTask(run.task_id);
+    const project = await store.getProject(task.project_id);
+    const stderrTail = collected.stderr.slice(-10).join('\n').slice(0, 2000);
     let status: Run['status'];
     let error: string | null = null;
     if (exit.cancelled) {
@@ -329,8 +467,7 @@ export class JobRunner {
       error = `could not start ${adapter.displayName}: ${exit.spawnError}`;
     } else if (exit.exitCode !== 0) {
       status = 'failed';
-      const stderrTail = await this.stderrTail(run.id);
-      error = `${adapter.displayName} exited with code ${exit.exitCode}${exit.signal ? ` (${exit.signal})` : ''}${
+      error = `${adapter.displayName} exited with code ${exit.exitCode ?? '?'}${exit.signal ? ` (${exit.signal})` : ''}${
         res && !res.ok ? `: ${res.subtype}` : ''
       }${stderrTail ? `\n${stderrTail}` : ''}`;
     } else if (res && !res.ok) {
@@ -338,32 +475,51 @@ export class JobRunner {
       error = `${adapter.displayName} reported ${res.subtype}${res.resultText ? `: ${res.resultText.slice(0, 500)}` : ''}`;
     } else if (!res) {
       status = 'failed';
-      error = `${adapter.displayName} exited without a result event`;
+      error = `${adapter.displayName} exited without a result event${stderrTail ? `\n${stderrTail}` : ''}`;
     } else {
       status = 'succeeded';
     }
-    run = await store.updateRun(run.id, {
+
+    const updated = await store.updateRun(run.id, {
       status,
       exit_code: exit.exitCode,
-      session_id: sessionId,
+      session_id: collected.sessionId,
       result_subtype: res?.subtype ?? null,
       structured_output: res?.structuredOutput ?? null,
       result_text: res?.resultText ?? null,
       cost_usd: res?.costUsd ?? null,
       num_turns: res?.numTurns ?? null,
       error_message: error,
+      pid: null,
       finished_at: new Date().toISOString(),
     });
-    this.ctx.logger.info({ run: run.id, status, cost: run.cost_usd, turns: run.num_turns }, 'run finished');
-    await this.hooks.onRunFinished(run);
-  }
+    this.ctx.logger.info(
+      { run: run.id, status, cost: updated.cost_usd, turns: updated.num_turns },
+      'run finished',
+    );
 
-  private async stderrTail(runId: string): Promise<string> {
-    const events = await this.ctx.store.listRunEvents(runId, 0, 5000);
-    const lines = events
-      .filter((e) => e.type === 'stderr')
-      .map((e) => (e.payload as { text?: string }).text ?? '')
-      .filter(Boolean);
-    return lines.slice(-10).join('\n').slice(0, 2000);
+    // Session lost (e.g. CLI upgraded, cache cleared): retry once without --resume.
+    if (
+      status === 'failed' &&
+      run.resumed_from_session_id &&
+      !run.fallback_of_run_id &&
+      adapter.classifyFailure?.({
+        exitCode: exit.exitCode,
+        stderr: collected.stderr.join('\n'),
+        resultSubtype: res?.subtype,
+      }) === 'session_not_found'
+    ) {
+      try {
+        if (await this.hooks.onSessionLost(updated)) {
+          await store.updateRun(run.id, {
+            error_message: `${error}\n→ session not found; retried automatically without resume`,
+          });
+          return;
+        }
+      } catch (err) {
+        this.ctx.logger.error({ run: run.id, err: errorMessage(err) }, 'session-lost fallback failed');
+      }
+    }
+    await this.hooks.onRunFinished(updated);
   }
 }
