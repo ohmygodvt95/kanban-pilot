@@ -542,15 +542,21 @@ export class Store {
   }
 
   // ---- jobs -----------------------------------------------------------------
-  async enqueueJob(kind: string, payload: unknown, runAfter?: Date): Promise<Job> {
+  /** Queue a job; `priority` (higher first) orders run_agent jobs, `runAfter` delays it. */
+  async enqueueJob(
+    kind: string,
+    payload: unknown,
+    opts: { runAfter?: Date; priority?: number } = {},
+  ): Promise<Job> {
     const now = nowIso();
     const row = {
       id: newId(),
       kind,
       payload,
       status: 'queued' as const,
+      priority: opts.priority ?? 0,
       attempts_count: 0,
-      run_after: (runAfter ?? new Date()).toISOString(),
+      run_after: (opts.runAfter ?? new Date()).toISOString(),
       created_at: now,
       updated_at: now,
     };
@@ -564,7 +570,7 @@ export class Store {
         .select()
         .from(jobs)
         .where(and(eq(jobs.status, 'queued'), isNull(jobs.locked_by), lte(jobs.run_after, nowIso())))
-        .orderBy(asc(jobs.created_at))
+        .orderBy(desc(jobs.priority), asc(jobs.created_at))
     ).map(toJob);
   }
 

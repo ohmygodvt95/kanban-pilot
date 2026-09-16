@@ -1,5 +1,5 @@
-import type { ExecutorId, Project, TaskDetail } from '@agent-kanban/shared';
-import { EXECUTOR_IDS } from '@agent-kanban/shared';
+import type { ExecutorId, Project, TaskDetail, TaskKind, TaskPriority } from '@agent-kanban/shared';
+import { EXECUTOR_IDS, TASK_KINDS, TASK_PRIORITIES } from '@agent-kanban/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -24,6 +24,7 @@ import { ApiError, api } from '../../api/client';
 import { keys, upsertTask } from '../../api/queries';
 import { formatCost, formatTime } from '../../lib/format';
 import { EXECUTOR_LABELS, isBusy } from '../../lib/state';
+import { KIND_LABELS, PRIORITY_LABELS } from '../../lib/taskmeta';
 import { Button, Card, Field, inputClass, KeyValue, Switch, useConfirm } from '../ui';
 import { useToast } from '../ui/Toast';
 
@@ -266,6 +267,65 @@ export function OverviewTab({ task, project }: { task: TaskDetail; project: Proj
                         if (v !== task.model) run(() => api.tasks.update(task.id, { model: v }));
                       }}
                     />
+                  ),
+              },
+              {
+                k: 'Type',
+                v:
+                  task.column === 'done' ? (
+                    task.kind ? (
+                      KIND_LABELS[task.kind]
+                    ) : (
+                      '—'
+                    )
+                  ) : (
+                    <select
+                      className="rounded border border-zinc-300 bg-transparent px-1 py-0.5 text-xs dark:border-zinc-600"
+                      value={task.kind ?? ''}
+                      onChange={(e) =>
+                        run(() =>
+                          api.tasks.update(task.id, { kind: (e.target.value || null) as TaskKind | null }),
+                        )
+                      }
+                    >
+                      <option value="">auto (planner decides)</option>
+                      {TASK_KINDS.map((k) => (
+                        <option key={k} value={k}>
+                          {KIND_LABELS[k]}
+                        </option>
+                      ))}
+                    </select>
+                  ),
+              },
+              {
+                k: 'Priority',
+                v:
+                  task.column === 'done' ? (
+                    task.priority ? (
+                      PRIORITY_LABELS[task.priority]
+                    ) : (
+                      '—'
+                    )
+                  ) : (
+                    <select
+                      className="rounded border border-zinc-300 bg-transparent px-1 py-0.5 text-xs dark:border-zinc-600"
+                      value={task.priority ?? ''}
+                      title="Urgent/high tasks run first when the queue is full"
+                      onChange={(e) =>
+                        run(() =>
+                          api.tasks.update(task.id, {
+                            priority: (e.target.value || null) as TaskPriority | null,
+                          }),
+                        )
+                      }
+                    >
+                      <option value="">auto (planner decides)</option>
+                      {TASK_PRIORITIES.map((p) => (
+                        <option key={p} value={p}>
+                          {PRIORITY_LABELS[p]}
+                        </option>
+                      ))}
+                    </select>
                   ),
               },
               {

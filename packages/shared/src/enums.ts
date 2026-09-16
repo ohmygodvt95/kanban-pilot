@@ -56,6 +56,18 @@ export type JobStatus = z.infer<typeof jobStatusSchema>;
 
 export const providerIdSchema = z.enum(['github', 'gitlab', 'jira']);
 
+/** Task classification; null on a task means "let the planner decide during refinement". */
+export const TASK_KINDS = ['task', 'bug', 'feature', 'chore'] as const;
+export const taskKindSchema = z.enum(TASK_KINDS);
+export type TaskKind = z.infer<typeof taskKindSchema>;
+
+export const TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
+export const taskPrioritySchema = z.enum(TASK_PRIORITIES);
+export type TaskPriority = z.infer<typeof taskPrioritySchema>;
+
+/** Numeric weight used to order the run queue (higher runs first). */
+export const PRIORITY_WEIGHT: Record<TaskPriority, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
+
 /** Language of the built-in prompts sent to agents. */
 export const promptLanguageSchema = z.enum(['vi', 'en']);
 export type PromptLanguage = z.infer<typeof promptLanguageSchema>;

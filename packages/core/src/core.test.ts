@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type Core, createCore } from './core.js';
 import { git } from './git/git.js';
 import { FakeClaudeAdapter } from './testing/fake-executor.js';
+import { FakeIssueProvider } from './testing/fake-provider.js';
 import { CoreError } from './util/errors.js';
 import { consoleLogger } from './util/logger.js';
 
@@ -782,5 +783,162 @@ describe('attachments and auto-start', () => {
     await core.projects.update(project.id, { auto_start: true });
     expect((await core.store.getTask(t.id)).column).toBe('doing');
     await reviewP;
+  });
+});
+
+describe('issue tracker link, classification and priority queue', () => {
+  let root: string;
+  let repo: string;
+  let core: Core;
+  let tracker: FakeIssueProvider;
+  const paths = () => ({
+    dbPath: join(root, 'db.sqlite'),
+    worktreesRoot: join(root, 'wt'),
+    logsRoot: join(root, 'logs'),
+    attachmentsRoot: join(root, 'att'),
+    userTemplatesDir: join(root, 'tpl'),
+    configDir: root,
+  });
+  const waitState = (id: string, column: Task['column'], substate?: Task['substate']) =>
+    core.events.waitFor(
+      'task.updated',
+      (p) =>
+        p.task.id === id &&
+        p.task.column === column &&
+        (substate === undefined || p.task.substate === substate),
+      20_000,
+    );
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'ak-issues-'));
+    repo = join(root, 'repo');
+    await makeRepo(repo);
+    tracker = new FakeIssueProvider();
+    core = createCore({
+      paths: paths(),
+      executors: { claude: new FakeClaudeAdapter() },
+      providers: { github: tracker },
+      runner: { pollIntervalMs: 50 },
+      issueImportIntervalMs: 0,
+    });
+    await core.start();
+  });
+  afterEach(async () => {
+    await core.stop({ killProcesses: true });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('imports labelled issues via the manual tracker link, classifies them, and syncs milestones back', async () => {
+    tracker.issues = [
+      {
+        externalId: 'acme/app#1',
+        url: 'https://t/1',
+        title: 'Crash on save',
+        body: 'steps…',
+        labels: ['bug', 'agent', 'priority::high'],
+      },
+      {
+        externalId: 'acme/app#2',
+        url: 'https://t/2',
+        title: 'Nice to have',
+        body: '',
+        labels: ['enhancement'],
+      },
+    ];
+    const project = await core.projects.create({
+      repo_path: repo,
+      refinement_enabled: false,
+      issue_provider: 'github',
+      issue_project_ref: 'acme/app',
+      issue_import_labels: 'agent, urgent',
+    });
+    expect((await core.projects.providerStatus(project.id))?.projectRef).toBe('acme/app');
+    expect(await core.issues.pollAll()).toBe(1); // only #1 carries an import label
+    expect(await core.issues.pollAll()).toBe(0); // idempotent
+    const [task] = await core.store.listTasks(project.id);
+    expect(task).toMatchObject({
+      title: 'Crash on save',
+      kind: 'bug',
+      priority: 'high',
+      source_provider: 'github',
+      source_external_id: 'acme/app#1',
+    });
+
+    await core.tasks.transition(task!.id, 'todo', 'user');
+    const reviewP = waitState(task!.id, 'review');
+    await core.tasks.transition(task!.id, 'doing', 'user');
+    await reviewP;
+    await core.tasks.transition(task!.id, 'done', 'user');
+    await new Promise((r) => setTimeout(r, 100)); // sync is fire-and-forget
+    expect(tracker.comments.map((c) => c.body)).toEqual([
+      expect.stringContaining('started working'),
+      expect.stringContaining('ready for review'),
+      expect.stringContaining('done'),
+    ]);
+    expect(tracker.closed).toEqual(['acme/app#1']);
+  });
+
+  it('does not sync when issue_sync is off, and manual import maps labels too', async () => {
+    tracker.issues = [
+      { externalId: 'acme/app#7', url: 'https://t/7', title: 'Tidy', body: '', labels: ['chore'] },
+    ];
+    const project = await core.projects.create({
+      repo_path: repo,
+      refinement_enabled: false,
+      issue_provider: 'github',
+      issue_project_ref: 'acme/app',
+      issue_sync: false,
+    });
+    const [task] = await core.projects.importIssues(project.id, ['acme/app#7']);
+    expect(task?.kind).toBe('chore');
+    await core.tasks.transition(task!.id, 'todo', 'user');
+    const reviewP = waitState(task!.id, 'review');
+    await core.tasks.transition(task!.id, 'doing', 'user');
+    await reviewP;
+    await new Promise((r) => setTimeout(r, 100));
+    expect(tracker.comments).toEqual([]);
+  });
+
+  it('refinement classifies unclassified tasks but keeps what the user set', async () => {
+    const project = await core.projects.create({ repo_path: repo });
+    const auto = await core.tasks.create(project.id, { title: 'auto', description: 'x' });
+    const manual = await core.tasks.create(project.id, {
+      title: 'manual',
+      description: 'x',
+      kind: 'feature',
+      priority: 'low',
+    });
+    const p1 = waitState(auto.id, 'todo');
+    const p2 = waitState(manual.id, 'todo');
+    await core.tasks.transition(auto.id, 'todo', 'user');
+    await core.tasks.transition(manual.id, 'todo', 'user');
+    await p1;
+    await p2;
+    expect(await core.store.getTask(auto.id)).toMatchObject({ kind: 'bug', priority: 'high' });
+    expect(await core.store.getTask(manual.id)).toMatchObject({ kind: 'feature', priority: 'low' });
+  });
+
+  it('runs urgent tasks before low-priority ones when the queue is saturated', async () => {
+    const project = await core.projects.create({
+      repo_path: repo,
+      refinement_enabled: false,
+      max_concurrent_runs: 1,
+    });
+    const blocker = await core.tasks.create(project.id, { title: 'blocker', description: 'FAKE:sleep=900' });
+    const low = await core.tasks.create(project.id, { title: 'low', description: 'x', priority: 'low' });
+    const urgent = await core.tasks.create(project.id, {
+      title: 'urgent',
+      description: 'x',
+      priority: 'urgent',
+    });
+    for (const t of [blocker, low, urgent]) await core.tasks.transition(t.id, 'todo', 'user');
+    const blockerRunning = waitState(blocker.id, 'doing', 'running');
+    await core.tasks.transition(blocker.id, 'doing', 'user');
+    await blockerRunning;
+    await core.tasks.transition(low.id, 'doing', 'user'); // queued first…
+    await core.tasks.transition(urgent.id, 'doing', 'user'); // …but urgent jumps ahead
+    const urgentRunning = waitState(urgent.id, 'doing', 'running');
+    await urgentRunning;
+    expect((await core.store.getTask(low.id)).substate).toBe('queued');
+    await waitState(low.id, 'review');
   });
 });

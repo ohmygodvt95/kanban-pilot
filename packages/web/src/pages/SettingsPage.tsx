@@ -3,6 +3,7 @@ import type {
   ExecutorId,
   Project,
   PromptLanguage,
+  ProviderId,
   UpdateProjectInput,
 } from '@agent-kanban/shared';
 import { EXECUTOR_IDS } from '@agent-kanban/shared';
@@ -43,8 +44,14 @@ type Form = Required<
     | 'max_budget_usd'
     | 'execute_prompt'
     | 'followup_prompt'
+    | 'issue_import_labels'
+    | 'issue_provider'
+    | 'issue_project_ref'
   >
 > & {
+  issue_import_labels: string;
+  issue_provider: ProviderId | '';
+  issue_project_ref: string;
   setup_script: string;
   test_script: string;
   refinement_prompt: string;
@@ -73,6 +80,10 @@ const toForm = (p: Project): Form => ({
   done_action: p.done_action,
   auto_start: p.auto_start,
   browser_enabled: p.browser_enabled,
+  issue_sync: p.issue_sync,
+  issue_import_labels: p.issue_import_labels ?? '',
+  issue_provider: p.issue_provider ?? '',
+  issue_project_ref: p.issue_project_ref ?? '',
 });
 
 const orNull = (v: string) => (v.trim() ? v : null);
@@ -98,10 +109,14 @@ function SettingsForm({ project }: { project: Project }) {
         followup_prompt: orNull(form.followup_prompt),
         model: orNull(form.model),
         max_budget_usd: form.max_budget_usd.trim() ? Number(form.max_budget_usd) : null,
+        issue_import_labels: orNull(form.issue_import_labels),
+        issue_provider: form.issue_provider || null,
+        issue_project_ref: orNull(form.issue_project_ref),
       }),
     onSuccess: (p) => {
       qc.setQueryData(keys.project(p.id), p);
       void qc.invalidateQueries({ queryKey: keys.projects });
+      void qc.invalidateQueries({ queryKey: keys.provider(p.id) });
       toast.push({ kind: 'success', text: 'Settings saved' });
     },
     onError: (err) => toast.error(err, 'Save failed'),
@@ -360,6 +375,71 @@ function SettingsForm({ project }: { project: Project }) {
                 onChange={(e) => set('followup_prompt', e.target.value)}
               />
             </Field>
+          </div>
+        </Card>
+
+        <Card title="Issue tracker">
+          <div className="grid gap-4">
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              {provider.data ? (
+                <>
+                  Linked to <span className="font-medium">{provider.data.id}</span> ·{' '}
+                  <span className="font-mono">{provider.data.projectRef}</span> ·{' '}
+                  {provider.data.ok ? (
+                    <span className="text-emerald-600">token found</span>
+                  ) : (
+                    <span className="text-amber-700 dark:text-amber-300">{provider.data.message}</span>
+                  )}
+                </>
+              ) : (
+                <>No tracker detected from the origin remote. Set one below, or add a GitHub/GitLab remote.</>
+              )}
+            </p>
+            <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
+              <Field label="Tracker">
+                <select
+                  className={inputClass}
+                  value={form.issue_provider}
+                  onChange={(e) => set('issue_provider', e.target.value as ProviderId | '')}
+                >
+                  <option value="">auto (origin remote)</option>
+                  <option value="github">GitHub</option>
+                  <option value="gitlab">GitLab</option>
+                </select>
+              </Field>
+              <Field
+                label="Project"
+                hint='GitHub: "owner/repo". GitLab: full URL "https://gitlab.example.com/group/project". Empty = derived from the origin remote.'
+              >
+                <input
+                  className={`${inputClass} font-mono`}
+                  value={form.issue_project_ref}
+                  onChange={(e) => set('issue_project_ref', e.target.value)}
+                  placeholder="owner/repo"
+                />
+              </Field>
+            </div>
+            <Field
+              label="Auto-import labels"
+              hint="Comma-separated. Open issues carrying one of these labels become Backlog tasks (checked every 5 minutes and at start). Labels like bug / enhancement / priority::high set type and priority."
+            >
+              <input
+                className={inputClass}
+                value={form.issue_import_labels}
+                onChange={(e) => set('issue_import_labels', e.target.value)}
+                placeholder="agent, ready-for-ai"
+              />
+            </Field>
+            <Switch
+              checked={form.issue_sync}
+              onChange={(v) => set('issue_sync', v)}
+              label="Sync status back: comment on the issue when work starts / is ready for review, and close it when the task is Done"
+            />
+            <p className="text-xs text-zinc-500">
+              Tokens come from the environment of the agent-kanban process:{' '}
+              <code className="font-mono">GITHUB_TOKEN</code> / <code className="font-mono">GH_TOKEN</code> or{' '}
+              <code className="font-mono">GITLAB_TOKEN</code> (scope api).
+            </p>
           </div>
         </Card>
 

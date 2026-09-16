@@ -68,5 +68,19 @@ export const MIGRATIONS: EmbeddedMigration[] = [
       "ALTER TABLE `projects` ADD `browser_enabled` integer DEFAULT false NOT NULL;",
       "ALTER TABLE `tasks` ADD `browser` integer;"
     ]
+  },
+  {
+    "tag": "0005_exotic_sharon_carter",
+    "when": 1789543827738,
+    "hash": "315fb5666d7a86f9bc81a4074a481cc266455c7d443bfaf25e646bce35fd7481",
+    "sql": [
+      "ALTER TABLE `jobs` ADD `priority` integer DEFAULT 0 NOT NULL;",
+      "ALTER TABLE `projects` ADD `issue_sync` integer DEFAULT true NOT NULL;",
+      "ALTER TABLE `projects` ADD `issue_import_labels` text;",
+      "ALTER TABLE `projects` ADD `issue_provider` text;",
+      "ALTER TABLE `projects` ADD `issue_project_ref` text;",
+      "ALTER TABLE `tasks` ADD `kind` text;",
+      "ALTER TABLE `tasks` ADD `priority` text;"
+    ]
   }
 ];

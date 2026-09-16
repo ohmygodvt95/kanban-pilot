@@ -1,5 +1,5 @@
-import type { Column, ExecutorId, ExternalIssue, Task } from '@agent-kanban/shared';
-import { EXECUTOR_IDS } from '@agent-kanban/shared';
+import type { Column, ExecutorId, ExternalIssue, Task, TaskKind, TaskPriority } from '@agent-kanban/shared';
+import { EXECUTOR_IDS, TASK_KINDS, TASK_PRIORITIES } from '@agent-kanban/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Plus, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -13,13 +13,16 @@ import { Shell } from '../components/Shell';
 import { Button, Field, inputClass, Modal, Switch } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { EXECUTOR_LABELS } from '../lib/state';
+import { KIND_LABELS, PRIORITY_LABELS } from '../lib/taskmeta';
 
 /** Quick filters shown next to the search box. */
-type Quick = 'all' | 'attention' | 'running' | 'mine-review';
+type Quick = 'all' | 'attention' | 'running' | 'bugs' | 'urgent';
 const QUICK: { id: Quick; label: string; title: string }[] = [
   { id: 'all', label: 'All', title: 'Show every task' },
   { id: 'attention', label: 'Needs me', title: 'Errors, open questions, ready to review' },
   { id: 'running', label: 'Running', title: 'Agent currently working' },
+  { id: 'bugs', label: 'Bugs', title: 'Tasks classified as bugs' },
+  { id: 'urgent', label: 'Urgent', title: 'High and urgent priority' },
 ];
 
 function matches(

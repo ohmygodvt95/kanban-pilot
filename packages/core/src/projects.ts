@@ -9,8 +9,8 @@ import type {
 } from '@agent-kanban/shared';
 import { EXECUTOR_IDS } from '@agent-kanban/shared';
 import type { CoreContext } from './context.js';
-import { detectBaseBranch, isGitRepo, readRepoConfig, remoteUrl, repoToplevel } from './git/git.js';
-import { detectProvider } from './providers/index.js';
+import { detectBaseBranch, isGitRepo, readRepoConfig, repoToplevel } from './git/git.js';
+import type { IssueService } from './issues.js';
 import type { TaskService } from './state/tasks.js';
 import { CoreError } from './util/errors.js';
 
@@ -34,6 +34,10 @@ export interface CreateProjectInput {
   done_action?: Project['done_action'];
   auto_start?: boolean;
   browser_enabled?: boolean;
+  issue_sync?: boolean;
+  issue_import_labels?: string | null;
+  issue_provider?: Project['issue_provider'];
+  issue_project_ref?: string | null;
   /** Adopt setup/test scripts found in the repo's .agent-kanban.json. */
   accept_repo_scripts?: boolean;
 }
@@ -44,6 +48,7 @@ export class ProjectService {
   constructor(
     private readonly ctx: CoreContext,
     private readonly tasks: () => TaskService,
+    private readonly issues: () => IssueService,
   ) {}
 
   list(): Promise<Project[]> {
@@ -103,6 +108,10 @@ export class ProjectService {
       done_action: input.done_action ?? 'merge',
       auto_start: input.auto_start ?? false,
       browser_enabled: input.browser_enabled ?? false,
+      issue_sync: input.issue_sync ?? true,
+      issue_import_labels: input.issue_import_labels ?? null,
+      issue_provider: input.issue_provider ?? null,
+      issue_project_ref: input.issue_project_ref ?? null,
     });
   }
 
@@ -137,10 +146,10 @@ export class ProjectService {
     );
   }
 
-  /** Which issue provider hosts the project's origin remote, and whether it is usable. */
+  /** Which issue tracker is linked (manual link or origin remote), and whether it is usable. */
   async providerStatus(projectId: string): Promise<ProviderStatus | null> {
     const project = await this.ctx.store.getProject(projectId);
-    const detected = detectProvider(this.ctx.providers, await remoteUrl(project.repo_path));
+    const detected = await this.issues().detect(project);
     if (!detected) return null;
     const check = await detected.provider.check();
     return {
@@ -151,21 +160,30 @@ export class ProjectService {
     };
   }
 
+  private async requireProvider(project: Project) {
+    const detected = await this.issues().detect(project);
+    if (!detected) {
+      throw new CoreError(
+        'CONFLICT',
+        'no issue tracker linked: add a GitHub/GitLab origin remote or set the tracker in Settings',
+      );
+    }
+    return detected;
+  }
+
   async listIssues(
     projectId: string,
     filter: { labels?: string[]; query?: string } = {},
   ): Promise<ExternalIssue[]> {
     const project = await this.ctx.store.getProject(projectId);
-    const detected = detectProvider(this.ctx.providers, await remoteUrl(project.repo_path));
-    if (!detected) throw new CoreError('CONFLICT', 'the origin remote is not hosted by a supported provider');
+    const detected = await this.requireProvider(project);
     return detected.provider.listIssues(detected.projectRef, filter);
   }
 
   /** Create backlog tasks from external issues; already-imported issues are skipped. */
   async importIssues(projectId: string, externalIds: string[]): Promise<Task[]> {
     const project = await this.ctx.store.getProject(projectId);
-    const detected = detectProvider(this.ctx.providers, await remoteUrl(project.repo_path));
-    if (!detected) throw new CoreError('CONFLICT', 'the origin remote is not hosted by a supported provider');
+    const detected = await this.requireProvider(project);
     const existing = new Set(
       (await this.ctx.store.listTasks(projectId)).map((t) => t.source_external_id).filter(Boolean),
     );
@@ -177,6 +195,8 @@ export class ProjectService {
         await this.tasks().create(projectId, {
           title: issue.title,
           description: `${issue.body}\n\n_Imported from ${issue.url}_`,
+          kind: issue.kind ?? null,
+          priority: issue.priority ?? null,
           source_provider: detected.provider.id,
           source_external_id: issue.externalId,
           source_url: issue.url,

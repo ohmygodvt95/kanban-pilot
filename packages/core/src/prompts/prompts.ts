@@ -18,6 +18,9 @@ export const REFINE_SCHEMA = {
     questions: { type: 'array', items: { type: 'string' }, maxItems: 5 },
     plan: { type: 'string' },
     affected_files: { type: 'array', items: { type: 'string' } },
+    /** Classification suggested by the planner; applied only when the task has none yet. */
+    kind: { type: 'string', enum: ['task', 'bug', 'feature', 'chore'] },
+    priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'] },
   },
 } as const;
 
@@ -76,7 +79,8 @@ Câu hỏi đã được trả lời trước đó (nếu có):
 Yêu cầu:
 - ready=true chỉ khi bạn tự tin thực hiện được mà không cần hỏi thêm.
 - questions: tối đa 5 câu, chỉ hỏi điều thực sự ảnh hưởng tới cách làm. Không hỏi điều có thể tự tìm trong code.
-- plan: các bước cụ thể, file sẽ đụng tới, rủi ro.`,
+- plan: các bước cụ thể, file sẽ đụng tới, rủi ro.
+- kind: phân loại task (task | bug | feature | chore); priority: mức ưu tiên (low | medium | high | urgent) dựa trên mức độ ảnh hưởng và rủi ro.`,
   jsonFallback: `
 
 Trả lời DUY NHẤT một JSON object (không có text khác, không code fence) theo schema:
@@ -156,7 +160,8 @@ Previously answered questions (if any):
 Requirements:
 - ready=true only if you are confident you could implement it without asking anything else.
 - questions: at most 5, only about things that really change the approach. Do not ask what you can find in the code.
-- plan: concrete steps, files you will touch, risks.`,
+- plan: concrete steps, files you will touch, risks.
+- kind: classify the task (task | bug | feature | chore); priority: low | medium | high | urgent based on impact and risk.`,
   jsonFallback: `
 
 Reply with ONLY one JSON object (no other text, no code fence) matching this schema:

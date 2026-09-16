@@ -1,4 +1,11 @@
-import type { Attempt, ExecutorId, Run, RunKind, Task } from '@agent-kanban/shared';
+import {
+  type Attempt,
+  type ExecutorId,
+  PRIORITY_WEIGHT,
+  type Run,
+  type RunKind,
+  type Task,
+} from '@agent-kanban/shared';
 import type { CoreContext } from '../context.js';
 
 export interface CreateRunInput {
@@ -58,11 +65,13 @@ export class RunService {
       taskId: input.task.id,
       projectId: input.task.project_id,
     };
+    // Urgent tasks jump the queue when max_concurrent_runs is saturated.
+    const priority = input.task.priority ? PRIORITY_WEIGHT[input.task.priority] : PRIORITY_WEIGHT.medium;
     if (input.setupScript?.trim() && input.attempt) {
       const payload: SetupJobPayload = { ...base, attemptId: input.attempt.id, script: input.setupScript };
-      await this.ctx.store.enqueueJob('setup_worktree', payload);
+      await this.ctx.store.enqueueJob('setup_worktree', payload, { priority });
     } else {
-      await this.ctx.store.enqueueJob('run_agent', base);
+      await this.ctx.store.enqueueJob('run_agent', base, { priority });
     }
     return run;
   }

@@ -5,6 +5,9 @@ import {
   doneActionSchema,
   executorIdSchema,
   promptLanguageSchema,
+  providerIdSchema,
+  taskKindSchema,
+  taskPrioritySchema,
 } from './enums.js';
 
 /** Fields shared by create and update. */
@@ -34,6 +37,10 @@ const projectFieldsSchema = z.object({
   done_action: doneActionSchema.optional(),
   auto_start: z.boolean().optional(),
   browser_enabled: z.boolean().optional(),
+  issue_sync: z.boolean().optional(),
+  issue_import_labels: z.string().max(500).nullable().optional(),
+  issue_provider: providerIdSchema.nullable().optional(),
+  issue_project_ref: z.string().max(300).nullable().optional(),
 });
 
 export const createProjectSchema = projectFieldsSchema.extend({
@@ -55,6 +62,8 @@ export const createTaskSchema = z.object({
   executor: executorIdSchema.nullable().optional(),
   model: z.string().max(100).nullable().optional(),
   browser: z.boolean().nullable().optional(),
+  kind: taskKindSchema.nullable().optional(),
+  priority: taskPrioritySchema.nullable().optional(),
   skip_refinement: z.boolean().optional(),
   source_url: z.string().nullable().optional(),
 });
@@ -66,6 +75,8 @@ export const updateTaskSchema = z.object({
   executor: executorIdSchema.nullable().optional(),
   model: z.string().max(100).nullable().optional(),
   browser: z.boolean().nullable().optional(),
+  kind: taskKindSchema.nullable().optional(),
+  priority: taskPrioritySchema.nullable().optional(),
   skip_refinement: z.boolean().optional(),
   position: z.number().optional(),
   source_url: z.string().nullable().optional(),

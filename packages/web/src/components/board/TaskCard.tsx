@@ -12,6 +12,14 @@ import {
 } from 'lucide-react';
 import { formatCost, relativeTime } from '../../lib/format';
 import { EXECUTOR_ICONS, EXECUTOR_LABELS, isBusy } from '../../lib/state';
+import {
+  KIND_ICON,
+  KIND_LABELS,
+  KIND_STYLE,
+  PRIORITY_ICON,
+  PRIORITY_LABELS,
+  PRIORITY_STYLE,
+} from '../../lib/taskmeta';
 import { Badge } from '../ui';
 
 export function TaskCard({
@@ -78,6 +86,22 @@ export function TaskCard({
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-1.5">
+        {task.kind ? (
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${KIND_STYLE[task.kind]}`}
+            title={`kind: ${KIND_LABELS[task.kind]}`}
+          >
+            {KIND_ICON[task.kind]} {KIND_LABELS[task.kind]}
+          </span>
+        ) : null}
+        {task.priority && task.priority !== 'medium' ? (
+          <span
+            className={`font-semibold text-[11px] ${PRIORITY_STYLE[task.priority]}`}
+            title={`priority: ${PRIORITY_LABELS[task.priority]}`}
+          >
+            {PRIORITY_ICON[task.priority]} {PRIORITY_LABELS[task.priority]}
+          </span>
+        ) : null}
         <Badge substate={task.substate} />
         {task.refinement_incomplete ? (
           <span

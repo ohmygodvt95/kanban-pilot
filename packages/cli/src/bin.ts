@@ -256,12 +256,13 @@ async function doctor(args: Args) {
   }
 
   const ghToken = !!(process.env.GITHUB_TOKEN || process.env.GH_TOKEN);
-  const ghDetail = ghToken
-    ? 'set (issue import + pull requests enabled)'
-    : 'not set (GitHub features disabled)';
-  checks.push({ name: 'GITHUB_TOKEN/GH_TOKEN', ok: ghToken, detail: ghDetail });
-  log(`${ghToken ? '✓' : '·'} GITHUB_TOKEN/GH_TOKEN ${ghDetail}`);
-
+  console.log(
+    `${ghToken ? '✓' : '·'} GITHUB_TOKEN/GH_TOKEN ${ghToken ? 'set (GitHub issues, status sync, pull requests)' : 'not set (GitHub features disabled)'}`,
+  );
+  const glToken = !!process.env.GITLAB_TOKEN;
+  console.log(
+    `${glToken ? '✓' : '·'} GITLAB_TOKEN ${glToken ? 'set (GitLab issues, status sync, merge requests)' : 'not set (GitLab features disabled)'}`,
+  );
   const cwdIsRepo = await isGitRepo(process.cwd());
   const repoDetail = `current directory ${cwdIsRepo ? 'is' : 'is not'} a git repository`;
   checks.push({ name: 'git repository', ok: cwdIsRepo, detail: repoDetail });
@@ -288,7 +289,7 @@ Usage:
       --json                 print the checks as a JSON array of { name, ok, detail } instead of text lines
   agent-kanban --version | --help
 
-Environment: GITHUB_TOKEN / GH_TOKEN (issue import, pull requests), ANTHROPIC_* / CLAUDE_CODE_* (forwarded to Claude Code),
+Environment: GITHUB_TOKEN / GH_TOKEN, GITLAB_TOKEN (issue import, status sync, PR/MR), ANTHROPIC_* / CLAUDE_CODE_* (forwarded to Claude Code),
              XDG_CONFIG_HOME / XDG_CACHE_HOME (db, worktrees and logs location), LOG_LEVEL, PORT.
 `);
 }

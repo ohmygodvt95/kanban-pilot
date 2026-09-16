@@ -12,6 +12,8 @@ import {
   runKindSchema,
   runStatusSchema,
   substateSchema,
+  taskKindSchema,
+  taskPrioritySchema,
 } from './enums.js';
 
 const isoDate = z.string();
@@ -45,6 +47,13 @@ export const projectSchema = z.object({
   auto_start: z.boolean(),
   /** Let the agent drive a browser (Claude in Chrome: `claude --chrome`). */
   browser_enabled: z.boolean(),
+  /** Post status comments to (and close) linked issues as tasks move. */
+  issue_sync: z.boolean(),
+  /** Comma-separated labels; open issues carrying one of them are imported automatically. */
+  issue_import_labels: nullableString,
+  /** Manual tracker link when the origin remote is not the tracker (or there is none). */
+  issue_provider: providerIdSchema.nullable(),
+  issue_project_ref: nullableString,
   created_at: isoDate,
   updated_at: isoDate,
 });
@@ -63,6 +72,9 @@ export const taskSchema = z.object({
   model: nullableString,
   /** Per-task browser override; null = project default. */
   browser: z.boolean().nullable(),
+  /** Classification and priority; null = not set yet (the planner fills them during refinement). */
+  kind: taskKindSchema.nullable(),
+  priority: taskPrioritySchema.nullable(),
   skip_refinement: z.boolean(),
   plan: nullableString,
   refinement_session_id: nullableString,
@@ -181,6 +193,7 @@ export const jobSchema = z.object({
   kind: z.string(),
   payload: z.unknown(),
   status: jobStatusSchema,
+  priority: z.number().int(),
   attempts_count: z.number().int(),
   locked_by: nullableString,
   run_after: isoDate,
@@ -221,6 +234,9 @@ export const externalIssueSchema = z.object({
   title: z.string(),
   body: z.string(),
   labels: z.array(z.string()),
+  /** Guessed from labels (e.g. "bug", "priority::high"); null when unknown. */
+  kind: taskKindSchema.nullable().optional(),
+  priority: taskPrioritySchema.nullable().optional(),
 });
 export type ExternalIssue = z.infer<typeof externalIssueSchema>;
 

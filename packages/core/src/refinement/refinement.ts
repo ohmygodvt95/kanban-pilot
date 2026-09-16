@@ -19,6 +19,8 @@ export const refineOutputSchema = z.object({
   questions: z.array(z.string()).default([]),
   plan: z.string().default(''),
   affected_files: z.array(z.string()).default([]),
+  kind: z.enum(['task', 'bug', 'feature', 'chore']).nullable().optional(),
+  priority: z.enum(['low', 'medium', 'high', 'urgent']).nullable().optional(),
 });
 export type RefineOutput = z.infer<typeof refineOutputSchema>;
 
@@ -86,6 +88,15 @@ export class RefinementService {
       });
       return;
     }
+    // The planner classifies the task unless the user already did.
+    const classification: {
+      kind?: NonNullable<typeof output.kind>;
+      priority?: NonNullable<typeof output.priority>;
+    } = {};
+    if (!task.kind && output.kind) classification.kind = output.kind;
+    if (!task.priority && output.priority) classification.priority = output.priority;
+    if (Object.keys(classification).length) await store.updateTask(task.id, classification);
+
     const rounds = await store.countRuns(task.id, 'refine', 'succeeded');
     const questions = output.questions.map((q) => q.trim()).filter(Boolean);
     if (output.ready || questions.length === 0) {

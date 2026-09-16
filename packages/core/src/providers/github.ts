@@ -1,5 +1,13 @@
 import { CoreError } from '../util/errors.js';
-import type { ExternalIssue, IssueProvider, PullRequestInput } from './types.js';
+import {
+  classifyLabels,
+  type ExternalIssue,
+  type IssueProvider,
+  type IssueStatus,
+  type IssueStatusContext,
+  type PullRequestInput,
+  statusComment,
+} from './types.js';
 
 /**
  * GitHub provider over the REST API. Authenticates with a personal access token
@@ -20,7 +28,10 @@ export class GitHubIssueProvider implements IssueProvider {
 
   async check() {
     if (!this.token)
-      return { ok: false, message: 'set GITHUB_TOKEN (or GH_TOKEN) to import issues and open pull requests' };
+      return {
+        ok: false,
+        message: 'set GITHUB_TOKEN (or GH_TOKEN) to import issues, sync status and open pull requests',
+      };
     return { ok: true };
   }
 
@@ -59,12 +70,14 @@ export class GitHubIssueProvider implements IssueProvider {
   }
 
   private static toIssue(repo: string, raw: GitHubIssue): ExternalIssue {
+    const labels = (raw.labels ?? []).map((l) => (typeof l === 'string' ? l : l.name));
     return {
       externalId: `${repo}#${raw.number}`,
       url: raw.html_url,
       title: raw.title,
       body: raw.body ?? '',
-      labels: (raw.labels ?? []).map((l) => (typeof l === 'string' ? l : l.name)),
+      labels,
+      ...classifyLabels(labels),
     };
   }
 
@@ -90,14 +103,16 @@ export class GitHubIssueProvider implements IssueProvider {
     );
   }
 
-  /** Status sync is expressed as a comment; label conventions differ too much between repos. */
-  async syncStatus(ref: string, status: 'in_progress' | 'in_review' | 'done'): Promise<void> {
-    const text = {
-      in_progress: '🤖 agent-kanban: an agent started working on this.',
-      in_review: '🤖 agent-kanban: changes are ready for review.',
-      done: '🤖 agent-kanban: merged.',
-    }[status];
-    await this.addComment(ref, text);
+  /** Comment on the issue; `done` also closes it. */
+  async syncStatus(ref: string, status: IssueStatus, ctx: IssueStatusContext = {}): Promise<void> {
+    await this.addComment(ref, statusComment(status, ctx));
+    if (status === 'done') {
+      const { repo, number } = GitHubIssueProvider.parseRef(ref);
+      await this.request(`/repos/${repo}/issues/${number}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ state: 'closed', state_reason: 'completed' }),
+      });
+    }
   }
 
   async addComment(ref: string, body: string): Promise<void> {

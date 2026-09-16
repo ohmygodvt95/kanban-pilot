@@ -100,6 +100,8 @@ if (mode === 'refine') {
         questions: [],
         plan: `Plan for: ${prompt.split('\n').find((l) => l.startsWith('Task:')) ?? 'task'}`,
         affected_files: ['agent.txt'],
+        kind: 'bug',
+        priority: 'high',
       }
     : {
         ready: false,

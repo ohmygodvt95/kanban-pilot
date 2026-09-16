@@ -94,6 +94,12 @@ export class JobRunner {
   private stopped = true;
   private readonly inflight = new Set<Promise<void>>();
   private readonly processes = new Map<string, AgentProcess>();
+  /**
+   * run_agent jobs claimed by this runner per project. The DB only says a run is
+   * `running` once the CLI was spawned, so this local count closes the gap during
+   * which a second tick could over-subscribe `max_concurrent_runs`.
+   */
+  private readonly claimedAgents = new Map<string, Set<string>>();
   readonly lockId = `pid:${process.pid}`;
   private readonly pollIntervalMs: number;
   private readonly setupTimeoutMs: number;
@@ -291,7 +297,9 @@ export class JobRunner {
       return;
     }
     const { attemptId: _a, script: _s, log: _l, ...runPayload } = payload;
-    await this.ctx.store.enqueueJob('run_agent', runPayload satisfies RunAgentJobPayload);
+    await this.ctx.store.enqueueJob('run_agent', runPayload satisfies RunAgentJobPayload, {
+      priority: job.priority,
+    });
   }
 
   /** Execute the project's test script in the attempt's worktree and store the result. */

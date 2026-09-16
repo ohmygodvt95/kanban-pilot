@@ -75,6 +75,14 @@ feedback; refine/chat: full context) and re-points consumed comments to it. `run
 4. If it cannot resume, set `supportsResume=false`; followups receive description + truncated diff + feedback.
 5. Capture a real stream fixture under `executors/__fixtures__/` and test `parseLine` against it.
 
+- **Issue sync / import** (`issues.ts`): `IssueService.detect()` resolves the tracker (manual link beats origin
+  remote). `TaskService.transition()` calls `syncTask()` fire-and-forget for TODO→DOING, DOING→REVIEW and →DONE;
+  `pollAll()` imports labelled issues on start and every `issueImportIntervalMs`. Providers map labels to
+  kind/priority via `classifyLabels()`.
+- **Priority queue**: `jobs.priority` is derived from the task priority; `Store.queuedJobs()` orders by priority
+  then age. The runner also counts locally claimed `run_agent` jobs so `max_concurrent_runs` cannot be
+  over-subscribed between ticks.
+
 ## Adding an issue provider
 
 Implement `IssueProvider` (`providers/types.ts`: `check`, `detectProjectRef`, `listIssues`, `getIssue`,

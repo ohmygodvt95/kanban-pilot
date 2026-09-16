@@ -12,6 +12,7 @@ import { runMigrations } from './db/migrate.js';
 import { EventBus } from './events/bus.js';
 import { createDefaultRegistry, type ExecutorRegistry } from './executors/registry.js';
 import { listWorktrees, pruneWorktrees } from './git/git.js';
+import { IssueService } from './issues.js';
 import { PostRunPipeline } from './postrun/postrun.js';
 import { ProjectService } from './projects.js';
 import { createDefaultProviders, type ProviderRegistry } from './providers/index.js';
@@ -35,6 +36,8 @@ export interface CoreOptions {
   builtinTemplatesDir?: string;
   /** Delete run event streams of DONE tasks older than this many days (0 = never). Default 30. */
   retentionDays?: number;
+  /** How often labelled issues are imported from linked trackers (0 = never). Default 5 minutes. */
+  issueImportIntervalMs?: number;
 }
 
 export interface Core {
@@ -48,6 +51,7 @@ export interface Core {
   runs: RunService;
   refinement: RefinementService;
   runner: JobRunner;
+  issues: IssueService;
   /** Recover state, prune old events and start the job runner. */
   start(): Promise<void>;
   /**
@@ -99,7 +103,14 @@ export function createCore(options: CoreOptions = {}): Core {
   let refinement: RefinementService;
   let runner: JobRunner;
   let postRun: PostRunPipeline;
-  tasks = new TaskService(ctx, { attempts, runs, refinement: () => refinement, runner: () => runner });
+  let issues: IssueService;
+  tasks = new TaskService(ctx, {
+    attempts,
+    runs,
+    refinement: () => refinement,
+    runner: () => runner,
+    issues: () => issues,
+  });
   refinement = new RefinementService(ctx, { runs, tasks: () => tasks });
   postRun = new PostRunPipeline(ctx, { tasks: () => tasks, runner: () => runner, attempts, refinement });
   runner = new JobRunner(
@@ -134,7 +145,12 @@ export function createCore(options: CoreOptions = {}): Core {
     },
     options.runner,
   );
-  const projects = new ProjectService(ctx, () => tasks);
+  const projects = new ProjectService(
+    ctx,
+    () => tasks,
+    () => issues,
+  );
+  issues = new IssueService(ctx, { importIssues: (id, ids) => projects.importIssues(id, ids) });
 
   /** Mark attempts whose worktree vanished while the app was stopped. */
   async function reconcileWorktrees() {
@@ -168,6 +184,8 @@ export function createCore(options: CoreOptions = {}): Core {
   }
 
   let retentionTimer: NodeJS.Timeout | null = null;
+  let importTimer: NodeJS.Timeout | null = null;
+  const importIntervalMs = options.issueImportIntervalMs ?? 5 * 60_000;
   const prune = async () => {
     if (retentionDays <= 0) return 0;
     const n = await store.pruneRunEvents(retentionDays);
@@ -186,6 +204,7 @@ export function createCore(options: CoreOptions = {}): Core {
     runs,
     refinement,
     runner,
+    issues,
     prune,
     async start() {
       const recovered = await runner.recover();
@@ -195,10 +214,17 @@ export function createCore(options: CoreOptions = {}): Core {
       await prune().catch((err) => logger.warn({ err: errorMessage(err) }, 'retention pass failed'));
       retentionTimer = setInterval(() => void prune().catch(() => {}), 24 * 3_600_000);
       retentionTimer.unref();
+      // Pull labelled issues from linked trackers now and on a timer.
+      if (importIntervalMs > 0) {
+        void issues.pollAll().catch((err) => logger.warn({ err: errorMessage(err) }, 'issue import failed'));
+        importTimer = setInterval(() => void issues.pollAll().catch(() => {}), importIntervalMs);
+        importTimer.unref();
+      }
       runner.start();
     },
     async stop(opts) {
       if (retentionTimer) clearInterval(retentionTimer);
+      if (importTimer) clearInterval(importTimer);
       await runner.stop(opts);
       db.close();
     },

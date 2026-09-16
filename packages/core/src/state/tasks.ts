@@ -20,6 +20,7 @@ import type { AttemptService } from '../attempts/attempts.js';
 import type { CoreContext } from '../context.js';
 import { getExecutor } from '../executors/registry.js';
 import { remoteUrl } from '../git/git.js';
+import type { IssueService } from '../issues.js';
 import {
   buildExecutePrompt,
   buildFollowupPrompt,
@@ -69,6 +70,7 @@ export interface TaskServiceDeps {
   runs: RunService;
   refinement: () => RefinementService;
   runner: () => JobRunner;
+  issues: () => IssueService;
 }
 
 export interface CreateTaskInput {
@@ -77,6 +79,8 @@ export interface CreateTaskInput {
   executor?: Task['executor'];
   model?: string | null;
   browser?: boolean | null;
+  kind?: Task['kind'];
+  priority?: Task['priority'];
   skip_refinement?: boolean;
   source_url?: string | null;
   source_provider?: Task['source_provider'];
@@ -89,6 +93,8 @@ export interface UpdateTaskInput {
   executor?: Task['executor'];
   model?: string | null;
   browser?: boolean | null;
+  kind?: Task['kind'];
+  priority?: Task['priority'];
   skip_refinement?: boolean;
   position?: number;
   source_url?: string | null;
@@ -134,6 +140,8 @@ export class TaskService {
       executor: input.executor ?? null,
       model: input.model ?? null,
       browser: input.browser ?? null,
+      kind: input.kind ?? null,
+      priority: input.priority ?? null,
       skip_refinement: input.skip_refinement ?? false,
       source_url: input.source_url ?? null,
       source_provider: input.source_provider ?? null,
@@ -154,6 +162,8 @@ export class TaskService {
     if (input.executor !== undefined) patch.executor = input.executor;
     if (input.model !== undefined) patch.model = input.model;
     if (input.browser !== undefined) patch.browser = input.browser;
+    if (input.kind !== undefined) patch.kind = input.kind;
+    if (input.priority !== undefined) patch.priority = input.priority;
     if (input.skip_refinement !== undefined) patch.skip_refinement = input.skip_refinement;
     if (input.position !== undefined) patch.position = input.position;
     if (input.source_url !== undefined) patch.source_url = input.source_url;
@@ -185,6 +195,8 @@ export class TaskService {
       executor: task.executor,
       model: task.model,
       browser: task.browser,
+      kind: task.kind,
+      priority: task.priority,
       skip_refinement: task.skip_refinement,
       plan: task.plan,
       source_url: task.source_url,
@@ -357,6 +369,9 @@ export class TaskService {
     );
     const positionPatch = payload.position !== undefined ? { position: payload.position } : {};
     const result = await this.apply(task, project, activeAttempt, decision, payload, positionPatch);
+    // Mirror milestones on the linked issue (fire-and-forget; never blocks the transition).
+    const status = this.deps.issues().statusFor(task, result);
+    if (status) void this.deps.issues().syncTask(result, status);
     // A task that just became TODO(ready) may be started right away by the project.
     return result.column === 'todo' && task.column !== 'todo' ? this.maybeAutoStart(result) : result;
   }

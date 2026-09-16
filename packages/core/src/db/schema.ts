@@ -11,6 +11,8 @@ import type {
   RunKind,
   RunStatus,
   Substate,
+  TaskKind,
+  TaskPriority,
 } from '@agent-kanban/shared';
 import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
@@ -37,6 +39,10 @@ export const projects = sqliteTable('projects', {
   done_action: text('done_action').$type<DoneAction>().notNull().default('merge'),
   auto_start: bool('auto_start').notNull().default(false),
   browser_enabled: bool('browser_enabled').notNull().default(false),
+  issue_sync: bool('issue_sync').notNull().default(true),
+  issue_import_labels: text('issue_import_labels'),
+  issue_provider: text('issue_provider').$type<ProviderId>(),
+  issue_project_ref: text('issue_project_ref'),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 });
@@ -56,6 +62,8 @@ export const tasks = sqliteTable(
     executor: text('executor').$type<ExecutorId>(),
     model: text('model'),
     browser: bool('browser'),
+    kind: text('kind').$type<TaskKind>(),
+    priority: text('priority').$type<TaskPriority>(),
     skip_refinement: bool('skip_refinement').notNull().default(false),
     plan: text('plan'),
     refinement_session_id: text('refinement_session_id'),
@@ -201,6 +209,8 @@ export const jobs = sqliteTable(
     kind: text('kind').notNull(),
     payload: text('payload', { mode: 'json' }).notNull(),
     status: text('status').$type<JobStatus>().notNull().default('queued'),
+    /** Higher runs first among queued jobs (derived from the task priority). */
+    priority: integer('priority').notNull().default(0),
     attempts_count: integer('attempts_count').notNull().default(0),
     locked_by: text('locked_by'),
     run_after: text('run_after').notNull(),
