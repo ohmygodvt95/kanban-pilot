@@ -1,0 +1,36 @@
+{
+  "name": "@agent-kanban/core",
+  "version": "0.1.0",
+  "description": "Domain core for agent-kanban: state machine, executors, git worktrees, job runner. No HTTP/UI.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "@agent-kanban/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate && node --experimental-strip-types scripts/bundle-migrations.ts",
+    "smoke": "node --experimental-strip-types --conditions=@agent-kanban/source scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@agent-kanban/shared": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "execa": "10.0.1",
+    "ulid": "3.0.2",
+    "zod": "4.3.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.3",
+    "drizzle-kit": "0.31.10"
+  }
+}

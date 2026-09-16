@@ -1,0 +1,79 @@
+import { z } from 'zod';
+import { columnSchema, commentKindSchema, executorIdSchema } from './enums.js';
+
+export const createProjectSchema = z.object({
+  name: z.string().min(1).optional(),
+  repo_path: z.string().min(1),
+  default_executor: executorIdSchema.optional(),
+  base_branch: z.string().min(1).optional(),
+  setup_script: z.string().nullable().optional(),
+  test_script: z.string().nullable().optional(),
+  auto_done: z.boolean().optional(),
+  refinement_enabled: z.boolean().optional(),
+  max_concurrent_runs: z.number().int().min(1).max(16).optional(),
+  run_timeout_minutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60)
+    .optional(),
+  refinement_prompt: z.string().nullable().optional(),
+});
+export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+
+export const updateProjectSchema = createProjectSchema.omit({ repo_path: true }).partial();
+export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
+
+export const createTaskSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().default(''),
+  executor: executorIdSchema.nullable().optional(),
+  skip_refinement: z.boolean().optional(),
+  source_url: z.string().nullable().optional(),
+});
+export type CreateTaskInput = z.infer<typeof createTaskSchema>;
+
+export const updateTaskSchema = z.object({
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  executor: executorIdSchema.nullable().optional(),
+  skip_refinement: z.boolean().optional(),
+  position: z.number().optional(),
+  source_url: z.string().nullable().optional(),
+});
+export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
+
+/**
+ * Payload accepted by POST /tasks/:id/transition. Only user-triggered fields
+ * are exposed here; system transitions carry richer payloads inside core.
+ */
+export const transitionRequestSchema = z.object({
+  target: columnSchema,
+  payload: z
+    .object({
+      /** Explicit same-column action (e.g. retry from DOING(error)). */
+      action: z.enum(['retry']).optional(),
+      /** New position within the target column. */
+      position: z.number().optional(),
+      /** User confirmed discarding the active attempt (any -> backlog). */
+      confirm_discard: z.boolean().optional(),
+    })
+    .optional(),
+});
+export type TransitionRequest = z.infer<typeof transitionRequestSchema>;
+
+export const createCommentSchema = z.object({
+  kind: commentKindSchema.default('feedback'),
+  body: z.string().min(1),
+  file_path: z.string().nullable().optional(),
+  line: z.number().int().nullable().optional(),
+});
+export type CreateCommentInput = z.infer<typeof createCommentSchema>;
+
+export const answerQuestionSchema = z.object({ answer: z.string().min(1) });
+export type AnswerQuestionInput = z.infer<typeof answerQuestionSchema>;
+
+export const apiErrorSchema = z.object({
+  error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }),
+});
+export type ApiError = z.infer<typeof apiErrorSchema>;
