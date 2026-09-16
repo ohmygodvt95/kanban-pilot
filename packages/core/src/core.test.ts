@@ -396,10 +396,13 @@ describe('core end-to-end with fake executor', () => {
     const back = await core.store.getTask(busy.id);
     expect(back.column).toBe('todo');
     expect(back.last_error).toMatch(/discarded/);
-    // past the undo window the rows are purged for good
+    // past the undo window the rows are purged for good — and only those rows
     await core.tasks.deleteAll(project.id);
+    const survivor = await core.tasks.create(project.id, { title: 'survivor', description: 'x' });
     expect(await core.store.purgeDeletedTasks(-1)).toBe(2);
     expect(await core.store.findTask(idle.id)).toBeNull();
+    expect((await core.store.getTask(survivor.id)).title).toBe('survivor');
+    expect(await core.store.purgeDeletedTasks(-1)).toBe(0);
   });
 
   it('project creation validates the repo path and reads .agent-kanban.json', async () => {

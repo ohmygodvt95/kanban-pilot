@@ -11,10 +11,20 @@ describe('update check', () => {
   });
 
   it('reports a newer npm version and swallows failures', async () => {
-    const ok = new UpdateCheck('0.1.0', async () => new Response(JSON.stringify({ version: '0.3.0' })));
+    const ok = new UpdateCheck(
+      '0.1.0',
+      async () => new Response(JSON.stringify({ version: '0.3.0', agentKanban: true })),
+    );
     await ok.refresh();
     expect(ok.latest()).toBe('0.3.0');
-    const same = new UpdateCheck('0.3.0', async () => new Response(JSON.stringify({ version: '0.3.0' })));
+    // a same-named package that is not ours never triggers the notice
+    const foreign = new UpdateCheck('0.1.0', async () => new Response(JSON.stringify({ version: '9.0.0' })));
+    await foreign.refresh();
+    expect(foreign.latest()).toBeNull();
+    const same = new UpdateCheck(
+      '0.3.0',
+      async () => new Response(JSON.stringify({ version: '0.3.0', agentKanban: true })),
+    );
     await same.refresh();
     expect(same.latest()).toBeNull();
     const down = new UpdateCheck('0.1.0', async () => {

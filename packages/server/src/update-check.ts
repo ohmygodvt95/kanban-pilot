@@ -1,6 +1,8 @@
 /**
  * Once-a-day lookup of the newest published version on npm. Purely advisory:
  * failures (offline, unpublished package) are swallowed and `latest()` stays null.
+ * The registry document must carry our `agentKanban` marker (set in the CLI's
+ * package.json) — the bare name could belong to an unrelated package.
  */
 const REGISTRY = 'https://registry.npmjs.org/agent-kanban/latest';
 const DAY_MS = 24 * 3_600_000;
@@ -30,8 +32,8 @@ export class UpdateCheck {
     try {
       const res = await this.fetchImpl(REGISTRY, { signal: AbortSignal.timeout(5_000) });
       if (!res.ok) return;
-      const data = (await res.json()) as { version?: string };
-      if (typeof data.version === 'string') this.latestVersion = data.version;
+      const data = (await res.json()) as { version?: string; agentKanban?: unknown };
+      if (typeof data.version === 'string' && data.agentKanban === true) this.latestVersion = data.version;
     } catch {
       /* offline or not published: ignore */
     }
