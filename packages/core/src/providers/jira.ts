@@ -1,12 +1,12 @@
 import type { Column, TaskKind, TaskPriority } from '@agent-kanban/shared';
 import type { ExternalIssue, IssueProvider, ProviderConfig, ProviderModule, SyncContext } from './types.js';
-import { classifyLabels, jsonRequest } from './types.js';
+import { classifyLabels, HttpError, jsonRequest } from './types.js';
 
 /**
- * Jira Server / Data Center 8.x (self-hosted) over REST API v2 with **basic
- * auth** (username + password, or username + personal access token used as the
- * password). `projectRef` is the project key (e.g. "PROJ"); statuses are the
- * workflow statuses, changed through transitions.
+ * Jira Server / Data Center 8.x (self-hosted) over REST API v2. Two auth modes:
+ *  - **basic auth**: username + password (Jira 8.x),
+ *  - **personal access token** (Jira DC ≥ 8.14): `Authorization: Bearer <token>`; no password, immune to CAPTCHA.
+ * `projectRef` is the project key (e.g. "PROJ"); statuses are the workflow statuses, changed through transitions.
  */
 class JiraProvider implements IssueProvider {
   readonly id = 'jira' as const;
@@ -15,31 +15,62 @@ class JiraProvider implements IssueProvider {
 
   constructor(private readonly cfg: ProviderConfig) {
     this.api = `${(cfg.baseUrl ?? '').replace(/\/+$/, '')}/rest/api/2`;
-    const secret = cfg.password || cfg.token;
-    this.authHeader =
-      cfg.username && secret ? `Basic ${Buffer.from(`${cfg.username}:${secret}`).toString('base64')}` : null;
+    if (cfg.token) this.authHeader = `Bearer ${cfg.token}`;
+    else if (cfg.username && cfg.password) {
+      this.authHeader = `Basic ${Buffer.from(`${cfg.username}:${cfg.password}`).toString('base64')}`;
+    } else this.authHeader = null;
   }
 
-  private request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  /**
+   * Turn Jira's 401/403 into actionable text. Jira signals a locked account with
+   * `X-Authentication-Denied-Reason: CAPTCHA_CHALLENGE; login-url=…` — basic auth
+   * stays rejected until the user logs in once in a browser and solves the CAPTCHA.
+   */
+  private static explain(err: unknown): string {
+    if (err instanceof HttpError) {
+      const reason = err.headers.get('x-authentication-denied-reason');
+      if (reason?.includes('CAPTCHA_CHALLENGE')) {
+        const login = reason.match(/login-url=(\S+)/)?.[1] ?? 'the Jira login page';
+        return `Jira requires a CAPTCHA for this account (too many failed logins). Log in once at ${login} in a browser, then test again — or use a personal access token instead of the password.`;
+      }
+      if (reason) return `${err.message} (Jira: ${reason})`;
+      if (err.status === 401) return `${err.message} — wrong username/password or token`;
+      if (err.status === 403)
+        return `${err.message} — the account lacks permission for this project, or the API is blocked by a proxy`;
+    }
+    return (err as Error).message;
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!this.cfg.baseUrl) throw new Error('Jira URL is not configured');
-    if (!this.authHeader) throw new Error('Jira credentials are not configured (username + password/token)');
-    return jsonRequest<T>(
-      `${this.api}${path}`,
-      {
-        ...init,
-        headers: {
-          Authorization: this.authHeader,
-          Accept: 'application/json',
-          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+    if (!this.authHeader)
+      throw new Error(
+        'Jira credentials are not configured (username + password, or a personal access token)',
+      );
+    try {
+      return await jsonRequest<T>(
+        `${this.api}${path}`,
+        {
+          ...init,
+          headers: {
+            Authorization: this.authHeader,
+            Accept: 'application/json',
+            // Jira skips XSRF checks for REST calls carrying this header (harmless on GET).
+            'X-Atlassian-Token': 'no-check',
+            ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+          },
         },
-      },
-      `Jira ${init.method ?? 'GET'} ${path}`,
-    );
+        `Jira ${init.method ?? 'GET'} ${path}`,
+      );
+    } catch (err) {
+      throw new Error(JiraProvider.explain(err));
+    }
   }
 
   async check() {
     if (!this.cfg.baseUrl) return { ok: false, message: 'enter the Jira base URL' };
-    if (!this.authHeader) return { ok: false, message: 'enter username and password (or API token)' };
+    if (!this.authHeader)
+      return { ok: false, message: 'enter username + password, or a personal access token' };
     try {
       const me = await this.request<{ displayName?: string; name?: string }>('/myself');
       const project = await this.request<{ key: string; name: string }>(
@@ -192,13 +223,18 @@ export const jiraModule: ProviderModule = {
         required: true,
       },
       { key: 'project_ref', label: 'Project key', type: 'text', placeholder: 'PROJ', required: true },
-      { key: 'username', label: 'Username', type: 'text', required: true },
+      { key: 'username', label: 'Username', type: 'text', help: 'For basic auth (username + password).' },
       {
         key: 'password',
-        label: 'Password / API token',
+        label: 'Password',
         type: 'password',
-        help: 'Sent as HTTP basic auth. Stored locally in the agent-kanban database.',
-        required: true,
+        help: 'Sent as HTTP basic auth. If Jira answers with a CAPTCHA challenge, log in once in a browser or use a token instead.',
+      },
+      {
+        key: 'token',
+        label: 'Personal access token (alternative)',
+        type: 'password',
+        help: 'Jira DC 8.14+: Profile → Personal Access Tokens. Sent as Bearer; wins over username/password when set. Stored locally.',
       },
       {
         key: 'import_filter',

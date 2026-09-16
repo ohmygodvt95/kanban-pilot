@@ -130,12 +130,37 @@ export function statusForColumn(map: StatusMap, column: Column): string | null {
   return map[column]?.[0]?.trim() || null;
 }
 
-/** Small helper shared by REST providers. */
+/** Error raised for non-2xx responses; keeps the status and headers for provider-specific hints. */
+export class HttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly headers: Headers,
+    readonly body: string,
+  ) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
+/** Small helper shared by REST providers. HTML error pages are reduced to their title. */
 export async function jsonRequest<T>(url: string, init: RequestInit, describe: string): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(url, {
+    ...init,
+    headers: { 'User-Agent': 'agent-kanban', ...(init.headers ?? {}) },
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`${describe} → HTTP ${res.status}${text ? `: ${text.slice(0, 300)}` : ''}`);
+    const isHtml = /^\s*</.test(text);
+    const detail = isHtml
+      ? (text.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim() ?? 'HTML error page')
+      : text.slice(0, 300);
+    throw new HttpError(
+      `${describe} → HTTP ${res.status}${detail ? `: ${detail}` : ''}`,
+      res.status,
+      res.headers,
+      text,
+    );
   }
   if (res.status === 204) return undefined as T;
   const text = await res.text();

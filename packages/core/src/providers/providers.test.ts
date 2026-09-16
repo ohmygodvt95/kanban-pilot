@@ -26,6 +26,7 @@ describe('provider modules', () => {
       'project_ref',
       'username',
       'password',
+      'token',
       'import_filter',
     ]);
     expect(jira.statusModel).toBe('workflow');
@@ -70,7 +71,7 @@ describe('provider modules', () => {
     const jira = jiraModule.create(
       cfg({ baseUrl: 'https://jira.example.com', username: 'me', token: null, password: null }),
     );
-    expect((await jira.check()).message).toMatch(/username and password/);
+    expect((await jira.check()).message).toMatch(/username \+ password, or a personal access token/);
     const jiraNoUrl = jiraModule.create(cfg({ baseUrl: null }));
     expect((await jiraNoUrl.check()).message).toMatch(/base URL/);
   });
@@ -148,6 +149,48 @@ describe('provider modules', () => {
       await expect(jira.setStatus('PROJ-7', 'Nowhere', { column: 'review' })).rejects.toThrow(
         /no transition to "Nowhere"/,
       );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('explains Jira CAPTCHA lockouts and prefers a bearer token over basic auth', async () => {
+    const original = globalThis.fetch;
+    const seen: Record<string, string>[] = [];
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string>);
+      return new Response('<html><head><title>Forbidden (403)</title></head></html>', {
+        status: 403,
+        headers: {
+          'X-Authentication-Denied-Reason': 'CAPTCHA_CHALLENGE; login-url=https://jira.example.com/login.jsp',
+        },
+      });
+    }) as typeof fetch;
+    try {
+      const basic = jiraModule.create(
+        cfg({
+          baseUrl: 'https://jira.example.com',
+          projectRef: 'P',
+          username: 'me',
+          password: 'pw',
+          token: null,
+        }),
+      );
+      const res = await basic.check();
+      expect(res.ok).toBe(false);
+      expect(res.message).toMatch(/CAPTCHA.*login\.jsp/);
+      expect(seen[0]?.Authorization).toBe(`Basic ${Buffer.from('me:pw').toString('base64')}`);
+      const pat = jiraModule.create(
+        cfg({
+          baseUrl: 'https://jira.example.com',
+          projectRef: 'P',
+          username: 'me',
+          password: 'pw',
+          token: 'pat-123',
+        }),
+      );
+      await pat.check();
+      expect(seen.at(-1)?.Authorization).toBe('Bearer pat-123');
     } finally {
       globalThis.fetch = original;
     }
