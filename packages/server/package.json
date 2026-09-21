@@ -20,6 +20,7 @@
     "@agent-kanban/core": "workspace:*",
     "@agent-kanban/shared": "workspace:*",
     "@hono/node-server": "1.19.17",
+    "@hono/node-ws": "1.3.1",
     "@hono/zod-validator": "0.9.1",
     "hono": "4.13.8",
     "pino": "10.3.1",

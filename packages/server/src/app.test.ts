@@ -497,7 +497,7 @@ describe('HTTP API', () => {
     expect(js.headers.get('cache-control')).toContain('immutable');
   });
 
-  describe('SSE over a real socket', () => {
+  describe('live events over a real socket', () => {
     let server: RunningServer;
     beforeAll(async () => {
       server = await startServer({ core, port: 0, webDistDir: webDist });
@@ -527,6 +527,29 @@ describe('HTTP API', () => {
       expect(await readUntil('event: task.updated')).toBe(true);
       expect(buffer).toContain(`"id":"${t.id}"`);
       ctrl.abort();
+    });
+
+    it('serves the same events over a WebSocket on the same URL', async () => {
+      const ws = new WebSocket(`${server.url.replace('http', 'ws')}/api/events?project_id=${project.id}`);
+      const messages: { type: string; task?: Task }[] = [];
+      const waitFor = (pred: (m: { type: string; task?: Task }) => boolean) =>
+        new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('timeout')), 10_000);
+          const check = () => {
+            if (messages.some(pred)) {
+              clearTimeout(timer);
+              resolve();
+              return true;
+            }
+            return false;
+          };
+          if (!check()) ws.addEventListener('message', () => void check());
+        });
+      ws.addEventListener('message', (m) => messages.push(JSON.parse(String(m.data))));
+      await waitFor((m) => m.type === 'ready');
+      const t = await json<Task>(await post(`/api/projects/${project.id}/tasks`, { title: 'ws task' }));
+      await waitFor((m) => m.type === 'task.updated' && m.task?.id === t.id);
+      ws.close();
     });
   });
 });

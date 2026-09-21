@@ -2,49 +2,56 @@ import type { Attempt, Run, RunEvent, SseEvent, Task, TaskDetail } from '@agent-
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useToast } from '../components/ui/Toast';
-import { tokenQuery } from '../lib/auth';
+import { getToken } from '../lib/auth';
 import { notify } from '../lib/notify';
 import { keys, removeTask, upsertTask } from './queries';
+
+export type LiveState = 'connecting' | 'open' | 'reconnecting';
 
 /**
  * Subscribe to /api/events for a project and keep the TanStack Query caches in
  * sync. Returns the connection state for the header indicator.
+ *
+ * Transport: a WebSocket first — tunnels and proxies (Cloudflare quick tunnels buffer
+ * chunked HTTP responses up to 256 KB) forward frames immediately. If the socket
+ * closes before the server's `ready` message ever arrived, the hook falls back to
+ * server-sent events for the rest of the page's life. Both carry the same JSON events.
  */
-export function useProjectEvents(
-  projectId: string,
-  onOpenTask?: (id: string) => void,
-): 'connecting' | 'open' | 'reconnecting' {
+export function useProjectEvents(projectId: string, onOpenTask?: (id: string) => void): LiveState {
   const qc = useQueryClient();
   const toast = useToast();
-  const [state, setState] = useState<'connecting' | 'open' | 'reconnecting'>('connecting');
+  const [state, setState] = useState<LiveState>('connecting');
   // latest callback without making it an effect dependency (that would reconnect on every URL change)
   const openRef = useRef(onOpenTask);
   openRef.current = onOpenTask;
 
   useEffect(() => {
-    const es = new EventSource(`/api/events?project_id=${encodeURIComponent(projectId)}${tokenQuery()}`);
+    const handlers = new Map<string, (data: unknown) => void>();
+    const on = <T extends SseEvent['type']>(
+      type: T,
+      handler: (e: Extract<SseEvent, { type: T }>) => void,
+    ) => {
+      handlers.set(type, (data) => handler(data as Extract<SseEvent, { type: T }>));
+    };
     let wasOpen = false;
-    es.addEventListener('ready', () => {
+    const ready = () => {
       setState('open');
       if (wasOpen) {
         // reconnect: caches may be stale
         void qc.invalidateQueries();
       }
       wasOpen = true;
-    });
-    es.onerror = () => setState('reconnecting');
-
-    const on = <T extends SseEvent['type']>(
-      type: T,
-      handler: (e: Extract<SseEvent, { type: T }>) => void,
-    ) => {
-      es.addEventListener(type, (raw) => {
-        try {
-          handler(JSON.parse((raw as MessageEvent).data) as Extract<SseEvent, { type: T }>);
-        } catch (err) {
-          console.error('bad SSE payload', err);
-        }
-      });
+    };
+    const dispatch = (type: string, raw: unknown) => {
+      if (type === 'ready') return ready();
+      if (type === 'ping') return;
+      const handler = handlers.get(type);
+      if (!handler) return;
+      try {
+        handler(typeof raw === 'string' ? JSON.parse(raw) : raw);
+      } catch (err) {
+        console.error('bad live event payload', err);
+      }
     };
 
     on('task.updated', (e) => {
@@ -111,7 +118,64 @@ export function useProjectEvents(
     });
     on('job.failed', (e) => toast.push({ kind: 'error', text: `Job ${e.job.kind} failed: ${e.error}` }));
 
-    return () => es.close();
+    // --- connection management -------------------------------------------------
+    const token = getToken();
+    const query = `project_id=${encodeURIComponent(projectId)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+    let disposed = false;
+    let useSse = false;
+    let ws: WebSocket | null = null;
+    let es: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+
+    const connectSse = () => {
+      es = new EventSource(`/api/events?${query}`);
+      es.addEventListener('ready', () => dispatch('ready', null));
+      for (const type of handlers.keys())
+        es.addEventListener(type, (raw) => dispatch(type, (raw as MessageEvent).data));
+      es.onerror = () => setState('reconnecting'); // EventSource reconnects by itself
+    };
+    const connectWs = () => {
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const socket = new WebSocket(`${proto}//${window.location.host}/api/events?${query}`);
+      ws = socket;
+      let gotReady = false;
+      socket.onmessage = (m) => {
+        try {
+          const msg = JSON.parse(String(m.data)) as { type: string };
+          if (msg.type === 'ready') {
+            gotReady = true;
+            attempt = 0;
+          }
+          dispatch(msg.type, msg);
+        } catch (err) {
+          console.error('bad live event payload', err);
+        }
+      };
+      socket.onclose = () => {
+        if (disposed || ws !== socket) return;
+        ws = null;
+        if (!gotReady && !wasOpen) {
+          // never got through (proxy without WebSocket support, old server): use SSE from now on
+          useSse = true;
+          setState('connecting');
+          connectSse();
+          return;
+        }
+        setState('reconnecting');
+        attempt++;
+        retry = setTimeout(connect, Math.min(10_000, 1000 * 2 ** Math.min(attempt, 4)));
+      };
+    };
+    const connect = () => (useSse ? connectSse() : connectWs());
+    connect();
+
+    return () => {
+      disposed = true;
+      clearTimeout(retry);
+      ws?.close();
+      es?.close();
+    };
   }, [projectId, qc, toast]);
 
   return state;

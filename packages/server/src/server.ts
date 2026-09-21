@@ -1,7 +1,7 @@
 import { createServer } from 'node:net';
 import type { Core, Logger } from '@agent-kanban/core';
 import { type ServerType, serve } from '@hono/node-server';
-import { createApp } from './app.js';
+import { attachWebSocket, closeLiveSockets, createApp } from './app.js';
 
 export interface StartServerOptions {
   core: Core;
@@ -57,6 +57,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     });
     s.once('error', reject);
   });
+  attachWebSocket(app, server);
   const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`;
   return {
     port,
@@ -65,6 +66,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     close: () =>
       new Promise((resolve) => {
         server.close(() => resolve());
+        closeLiveSockets();
         // SSE connections keep the server open; force-close them.
         (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
       }),

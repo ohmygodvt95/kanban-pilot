@@ -102,6 +102,9 @@ the main working tree of your repo is never touched by an agent.
 - **Remote access with a token.** Binding to a non-loopback host (`--host 0.0.0.0`) turns on bearer-token
   authentication; the CLI prints the URL with the token (or set `--token` / `AK_TOKEN`). The UI stores it on the
   first visit and asks for it after a 401.
+- **Live updates through tunnels.** The board subscribes to `/api/events` over a WebSocket and falls back to
+  server-sent events when the socket cannot be opened. Cloudflare quick tunnels (`cloudflared tunnel --url …`) and
+  similar proxies buffer plain HTTP streams, so the WebSocket is what keeps the *live* badge green through them.
 - **Password.** `kanban-pilot --password` (prompted on the terminal, or `--password P` / `AK_PASSWORD`) makes the
   UI ask for a password before anything loads; a correct one is exchanged for a session token that lasts until the
   server restarts or you *Sign out* from the ⋯ menu. Five wrong passwords in a row stop the server (exit code 3):

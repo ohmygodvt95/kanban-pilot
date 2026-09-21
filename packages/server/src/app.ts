@@ -1,4 +1,5 @@
 import type { Core, Logger } from '@agent-kanban/core';
+import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { logger as honoLogger } from 'hono/logger';
 import { givenToken, PasswordAuth, requireAuth, tokenMatches } from './auth.js';
@@ -6,7 +7,7 @@ import { errorBody, handleError } from './errors.js';
 import { attachmentRoutes, attemptRoutes, commentRoutes, runRoutes } from './routes/misc.js';
 import { projectRoutes } from './routes/projects.js';
 import { taskRoutes } from './routes/tasks.js';
-import { sseRoutes } from './sse.js';
+import { closeLiveSockets, sseRoutes } from './sse.js';
 import { mountStatic } from './static.js';
 import { UpdateCheck } from './update-check.js';
 
@@ -32,8 +33,27 @@ export interface AppOptions {
   updateCheck?: boolean;
 }
 
+/** WebSocket injectors per app: `attachWebSocket(app, server)` after `serve()`. */
+const wsInjectors = new WeakMap<
+  Hono,
+  (server: Parameters<ReturnType<typeof createNodeWebSocket>['injectWebSocket']>[0]) => void
+>();
+
+/** Hooks the http server's `upgrade` event up to the app's /api/events WebSocket route. */
+export function attachWebSocket(
+  app: Hono,
+  server: Parameters<ReturnType<typeof createNodeWebSocket>['injectWebSocket']>[0],
+): void {
+  wsInjectors.get(app)?.(server);
+}
+
+/** Closes every live WebSocket (they are not part of http.Server's connection list). */
+export { closeLiveSockets };
+
 export function createApp(opts: AppOptions): Hono {
   const app = new Hono();
+  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+  wsInjectors.set(app, injectWebSocket);
   if (opts.requestLogging)
     app.use(
       '*',
@@ -111,7 +131,7 @@ export function createApp(opts: AppOptions): Hono {
   api.route('/attempts', attemptRoutes(opts.core));
   api.route('/attachments', attachmentRoutes(opts.core));
   api.route('/runs', runRoutes(opts.core));
-  api.route('/events', sseRoutes(opts.core));
+  api.route('/events', sseRoutes(opts.core, upgradeWebSocket));
   app.route('/api', api);
 
   if (opts.webDistDir) mountStatic(app, opts.webDistDir);
