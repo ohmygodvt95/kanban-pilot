@@ -2,9 +2,9 @@
 
 ```
  browser (React, TanStack Query)            packages/web
-   │  REST  /api/*            SSE /api/events
+   │  REST  /api/*            WebSocket (SSE fallback) /api/events
    ▼
- Hono server                                 packages/server   (thin: validation, error mapping, SSE fan-out)
+ Hono server                                 packages/server   (thin: validation, error mapping, live-event fan-out)
    │  calls
    ▼
  core  (no HTTP/UI imports)                  packages/core
