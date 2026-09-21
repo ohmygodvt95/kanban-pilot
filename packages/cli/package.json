@@ -1,6 +1,6 @@
 {
   "name": "kanban-pilot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "KanbanPilot: local-first kanban board that drives coding agents (Claude Code, Codex, Copilot CLI) in git worktrees.",
   "type": "module",
   "license": "MIT",
