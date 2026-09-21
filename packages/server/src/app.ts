@@ -1,7 +1,7 @@
 import type { Core, Logger } from '@agent-kanban/core';
 import { Hono } from 'hono';
 import { logger as honoLogger } from 'hono/logger';
-import { requireToken } from './auth.js';
+import { givenToken, PasswordAuth, requireAuth, tokenMatches } from './auth.js';
 import { errorBody, handleError } from './errors.js';
 import { attachmentRoutes, attemptRoutes, commentRoutes, runRoutes } from './routes/misc.js';
 import { projectRoutes } from './routes/projects.js';
@@ -22,6 +22,12 @@ export interface AppOptions {
   packageName?: string;
   /** When set, every /api route (except health) requires this bearer token. */
   token?: string;
+  /** When set, the UI must log in with this password (POST /api/auth/login → session token). */
+  password?: string;
+  /** Wrong passwords in a row before `onLockout` (default 5). */
+  maxLoginFailures?: number;
+  /** Called once when the wrong-password limit is hit; the CLI shuts the server down. */
+  onLockout?: (failures: number) => void;
   /** Disable the daily npm version lookup (tests, air-gapped setups). */
   updateCheck?: boolean;
 }
@@ -37,7 +43,41 @@ export function createApp(opts: AppOptions): Hono {
   app.notFound((c) => c.json(errorBody('NOT_FOUND', `no route for ${c.req.method} ${c.req.path}`), 404));
 
   const api = new Hono();
-  if (opts.token) api.use('*', requireToken(opts.token));
+  const passwordAuth = opts.password
+    ? new PasswordAuth(opts.password, { maxFailures: opts.maxLoginFailures, onLockout: opts.onLockout })
+    : null;
+  if (opts.token || passwordAuth) {
+    api.use(
+      '*',
+      requireAuth(
+        (given) =>
+          (!!opts.token && tokenMatches(opts.token, given)) || (passwordAuth?.accepts(given) ?? false),
+      ),
+    );
+  }
+  if (passwordAuth) {
+    api.post('/auth/login', async (c) => {
+      const body = (await c.req.json().catch(() => ({}))) as { password?: unknown };
+      const res = passwordAuth.login(typeof body.password === 'string' ? body.password : null);
+      if (res.ok) return c.json({ token: res.token });
+      opts.logger?.warn(
+        res.locked
+          ? `wrong password: limit of ${passwordAuth.maxFailures} reached, locking`
+          : `wrong password (${res.remaining} attempt(s) left)`,
+      );
+      return c.json(
+        errorBody('UNAUTHORIZED', res.locked ? 'too many wrong passwords' : 'wrong password', {
+          remaining: res.remaining,
+          locked: res.locked,
+        }),
+        401,
+      );
+    });
+    api.post('/auth/logout', (c) => {
+      passwordAuth.logout(givenToken(c));
+      return c.body(null, 204);
+    });
+  }
   const version = opts.version ?? 'dev';
   const packageName = opts.packageName ?? 'kanban-pilot';
   const updates = opts.updateCheck === false ? null : new UpdateCheck(version, packageName);
@@ -49,7 +89,8 @@ export function createApp(opts: AppOptions): Hono {
       version,
       package_name: packageName,
       latest_version: updates?.latest() ?? null,
-      auth_required: !!opts.token,
+      auth_required: !!opts.token || !!passwordAuth,
+      auth_mode: passwordAuth ? 'password' : opts.token ? 'token' : null,
     }),
   );
   /** Whole-database backup (JSON); `?events=0` leaves the run event streams out. */

@@ -15,6 +15,8 @@ export interface StartServerOptions {
   /** npm package name, used for the update check and the install hint in the UI. */
   packageName?: string;
   token?: string;
+  password?: string;
+  onLockout?: (failures: number) => void;
 }
 
 export interface RunningServer {
@@ -45,6 +47,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     version: opts.version,
     packageName: opts.packageName,
     token: opts.token,
+    password: opts.password,
+    onLockout: opts.onLockout,
   });
   const server = await new Promise<ServerType>((resolve, reject) => {
     const s = serve({ fetch: app.fetch, port, hostname: host }, (info) => {

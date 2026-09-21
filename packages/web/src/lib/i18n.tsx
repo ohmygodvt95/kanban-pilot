@@ -108,6 +108,14 @@ export const DICT: Record<Lang, Record<string, string>> = {
     'token.body':
       'This server is protected. Paste the token printed by the CLI (or open the URL it printed, which contains it).',
     'token.save': 'Continue',
+    'password.title': 'Password required',
+    'password.body': 'This server is protected by a password set when it was started.',
+    'password.label': 'Password',
+    'password.submit': 'Sign in',
+    'password.wrong': 'Wrong password. {remaining} attempt(s) left before the server shuts down.',
+    'password.locked':
+      'Too many wrong passwords: the server has shut itself down. Start it again from the terminal.',
+    'menu.signOut': 'Sign out',
     // settings: budget / costs / disk / backup
     'settings.budget': 'Spending caps',
     'settings.budget.daily': 'Daily budget (USD)',
@@ -214,6 +222,13 @@ export const DICT: Record<Lang, Record<string, string>> = {
     'token.body':
       'Server này được bảo vệ. Dán token mà CLI đã in ra (hoặc mở đúng URL CLI in, có sẵn token).',
     'token.save': 'Tiếp tục',
+    'password.title': 'Cần mật khẩu',
+    'password.body': 'Server này được bảo vệ bằng mật khẩu đặt lúc khởi động.',
+    'password.label': 'Mật khẩu',
+    'password.submit': 'Đăng nhập',
+    'password.wrong': 'Sai mật khẩu. Còn {remaining} lần thử trước khi server tự tắt.',
+    'password.locked': 'Sai mật khẩu quá nhiều lần: server đã tự tắt. Hãy khởi động lại từ terminal.',
+    'menu.signOut': 'Đăng xuất',
     'settings.budget': 'Trần chi phí',
     'settings.budget.daily': 'Ngân sách mỗi ngày (USD)',
     'settings.budget.weekly': 'Ngân sách mỗi tuần (USD)',

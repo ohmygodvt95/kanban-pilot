@@ -81,6 +81,11 @@ export const api = {
   /** Tracker modules and their configuration fields. */
   providers: () => request<ProviderModuleInfo[]>('/providers'),
   health: () => request<Health>('/health'),
+  auth: {
+    /** Password → session token; 401 carries `details.remaining` / `details.locked`. */
+    login: (password: string) => request<{ token: string }>('/auth/login', json({ password })),
+    logout: () => request<void>('/auth/logout', { method: 'POST' }),
+  },
   backup: {
     /** Whole database as a JSON document (downloaded by the caller). */
     export: (events: boolean) => request<unknown>(`/backup?events=${events ? 1 : 0}`),

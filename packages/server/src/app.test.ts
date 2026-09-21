@@ -443,6 +443,46 @@ describe('HTTP API', () => {
     expect((await guarded.request('/api/projects?token=s3cret')).status).toBe(200);
   });
 
+  it('guards the API with a password: login gives a session token, five failures lock the server', async () => {
+    const lockouts: number[] = [];
+    const guarded = createApp({
+      core,
+      password: 'open-sesame',
+      updateCheck: false,
+      onLockout: (n) => lockouts.push(n),
+    });
+    const health = await json<{ auth_required: boolean; auth_mode: string }>(
+      await guarded.request('/api/health'),
+    );
+    expect(health).toMatchObject({ auth_required: true, auth_mode: 'password' });
+    expect((await guarded.request('/api/projects')).status).toBe(401);
+    const login = (password: unknown) =>
+      guarded.request('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+    const wrong = await login('nope');
+    expect(wrong.status).toBe(401);
+    expect((await json<{ error: { details: { remaining: number } } }>(wrong)).error.details.remaining).toBe(
+      4,
+    );
+    const ok = await login('open-sesame');
+    expect(ok.status).toBe(200);
+    const { token } = await json<{ token: string }>(ok);
+    const auth = { authorization: `Bearer ${token}` };
+    expect((await guarded.request('/api/projects', { headers: auth })).status).toBe(200);
+    expect((await guarded.request(`/api/projects?token=${token}`)).status).toBe(200);
+    expect((await guarded.request('/api/auth/logout', { method: 'POST', headers: auth })).status).toBe(204);
+    expect((await guarded.request('/api/projects', { headers: auth })).status).toBe(401);
+    for (let i = 0; i < 5; i++) await login('nope');
+    expect(lockouts).toEqual([5]);
+    const locked = await json<{ error: { details: { remaining: number; locked: boolean } } }>(
+      await login('open-sesame'),
+    );
+    expect(locked.error.details).toEqual({ remaining: 0, locked: true });
+  });
+
   it('serves the SPA with fallback and keeps /api JSON 404s', async () => {
     expect((await app.request('/api/nothing')).status).toBe(404);
     expect((await json<{ error: { code: string } }>(await app.request('/api/nothing'))).error.code).toBe(

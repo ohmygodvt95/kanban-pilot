@@ -384,6 +384,8 @@ export const healthSchema = z.object({
   latest_version: nullableString.optional(),
   /** true when the server requires a token (non-loopback bind). */
   auth_required: z.boolean().optional(),
+  /** How to authenticate: a static token printed by the CLI, or a password entered in the UI. */
+  auth_mode: z.enum(['token', 'password']).nullable().optional(),
 });
 export type Health = z.infer<typeof healthSchema>;
 

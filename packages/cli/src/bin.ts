@@ -41,6 +41,8 @@ interface Args {
   json: boolean;
   /** API access token; generated automatically when binding to a non-loopback host. */
   token: string | null;
+  /** UI password (`--password`, AK_PASSWORD). `''` = flag given without a value → prompt on a TTY. */
+  password: string | null;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -54,6 +56,7 @@ function parseArgs(argv: string[]): Args {
     retentionDays: Number(process.env.AK_RETENTION_DAYS ?? 30),
     json: false,
     token: process.env.AK_TOKEN || null,
+    password: process.env.AK_PASSWORD || null,
   };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -64,6 +67,9 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--host') args.host = argv[++i] ?? args.host;
     else if (a === '--token') args.token = argv[++i] ?? null;
     else if (a.startsWith('--token=')) args.token = a.slice(8) || null;
+    else if (a === '--password')
+      args.password = argv[i + 1] && !argv[i + 1]!.startsWith('-') ? argv[++i]! : '';
+    else if (a.startsWith('--password=')) args.password = a.slice(11);
     else if (a === '--accept-scripts' || a === '-y') args.acceptScripts = true;
     else if (a === '--kill-agents') args.killAgents = true;
     else if (a === '--retention-days') args.retentionDays = Number(argv[++i]);
@@ -125,10 +131,20 @@ async function start(args: Args) {
   await core.start();
   const web = webDistDir();
   if (!web) logger.warn('web UI not found next to the CLI; only the API will be served');
-  // Anything reachable from other machines gets a token (the API can run shell scripts and agents).
+  // `--password` without a value: ask on the terminal so it never shows up in `ps` or shell history.
+  let password = args.password;
+  if (password === '') {
+    password = await askPassword('Password for the UI: ');
+    if (!password) {
+      logger.error('--password given without a value and no terminal to ask on (set AK_PASSWORD instead)');
+      process.exit(2);
+    }
+  }
+  // Anything reachable from other machines gets a token (the API can run shell scripts and agents),
+  // unless a password already protects it.
   const loopback = ['127.0.0.1', 'localhost', '::1'].includes(args.host);
-  const token = args.token ?? (loopback ? null : randomBytes(24).toString('base64url'));
-  if (!loopback && !args.token)
+  const token = args.token ?? (loopback || password ? null : randomBytes(24).toString('base64url'));
+  if (!loopback && !args.token && !password)
     logger.warn(`binding to ${args.host}: generated an access token (set --token or AK_TOKEN to choose one)`);
   const server = await startServer({
     core,
@@ -140,14 +156,21 @@ async function start(args: Args) {
     version: VERSION,
     packageName: PKG_NAME,
     token: token ?? undefined,
+    password: password ?? undefined,
+    onLockout: (failures) => {
+      logger.error(`${failures} wrong passwords in a row: shutting down`);
+      // let the 401 for the last attempt reach the browser before the socket closes
+      setTimeout(() => void shutdown('lockout', 3), 300);
+    },
   });
   if (server.port !== args.port) logger.info(`port ${args.port} was busy, using ${server.port}`);
   // The UI reads ?token= once, stores it and strips it from the address bar.
   const url = token ? `${server.url}/?token=${token}` : server.url;
   logger.info(`kanban-pilot ${VERSION} listening at ${url}  (db: ${defaultPaths().dbPath})`);
+  if (password) logger.info('UI password required (5 wrong attempts stop the server)');
   if (args.open) openBrowser(url);
   let stopping = false;
-  const shutdown = async (signal: string) => {
+  const shutdown = async (signal: string, code = 0) => {
     if (stopping) return;
     stopping = true;
     const active = core.runner.activeRunIds.length;
@@ -159,10 +182,42 @@ async function start(args: Args) {
     else logger.info(`${signal} received, shutting down`);
     await server.close();
     await core.stop({ killProcesses: args.killAgents });
-    process.exit(0);
+    process.exit(code);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+/** Hidden password prompt on a TTY (raw mode, nothing echoed); null when stdin is not interactive. */
+function askPassword(question: string): Promise<string | null> {
+  const stdin = process.stdin;
+  if (!stdin.isTTY) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    process.stdout.write(question);
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    let buf = '';
+    const done = (value: string | null) => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.off('data', onData);
+      process.stdout.write('\n');
+      resolve(value);
+    };
+    const onData = (chunk: string) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n') return done(buf.trim() || null);
+        if (ch === '\u0003') {
+          done(null);
+          process.exit(130);
+        }
+        if (ch === '\u007f' || ch === '\b') buf = buf.slice(0, -1);
+        else if (ch >= ' ') buf += ch;
+      }
+    };
+    stdin.on('data', onData);
+  });
 }
 
 /** Interactive yes/no on a TTY; false when stdin is not interactive. */
@@ -302,6 +357,8 @@ function help() {
 Usage:
   kanban-pilot [start] [--port 3737] [--no-open] [--host 127.0.0.1]   start the server and open the UI
       --token T              require this API token (generated automatically when --host is not loopback)
+      --password [P]         require this password in the UI (prompted when omitted on a terminal; AK_PASSWORD);
+                             5 wrong attempts in a row stop the server
       --kill-agents          terminate running agents on exit (default: they keep running and are re-attached)
       --retention-days N     delete event streams of DONE runs older than N days (default 30, 0 = never)
   kanban-pilot add [path] [--accept-scripts|-y]                      register a git repo as a project (default: .)
@@ -310,7 +367,7 @@ Usage:
   kanban-pilot --version | --help
 
 Environment: GITHUB_TOKEN / GH_TOKEN, GITLAB_TOKEN (issue import, status sync, PR/MR), ANTHROPIC_* / CLAUDE_CODE_* (forwarded to Claude Code),
-             XDG_CONFIG_HOME / XDG_CACHE_HOME (db, worktrees and logs location), LOG_LEVEL, PORT, AK_TOKEN.
+             XDG_CONFIG_HOME / XDG_CACHE_HOME (db, worktrees and logs location), LOG_LEVEL, PORT, AK_TOKEN, AK_PASSWORD.
 `);
 }
 

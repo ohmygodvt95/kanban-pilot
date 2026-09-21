@@ -102,6 +102,11 @@ the main working tree of your repo is never touched by an agent.
 - **Remote access with a token.** Binding to a non-loopback host (`--host 0.0.0.0`) turns on bearer-token
   authentication; the CLI prints the URL with the token (or set `--token` / `AK_TOKEN`). The UI stores it on the
   first visit and asks for it after a 401.
+- **Password.** `kanban-pilot --password` (prompted on the terminal, or `--password P` / `AK_PASSWORD`) makes the
+  UI ask for a password before anything loads; a correct one is exchanged for a session token that lasts until the
+  server restarts or you *Sign out* from the ⋯ menu. Five wrong passwords in a row stop the server (exit code 3):
+  a guesser gets five tries, then has to reach the terminal. A password replaces the generated token when binding
+  to a non-loopback host.
 - **Command palette, keyboard drag & drop, UI language.** Ctrl/⌘+K jumps to any task, project or action. Cards can be
   moved with the keyboard (focus a card, Space, arrows, Space). The ⋯ menu switches the interface between English and
   Vietnamese and shows a notice when a newer version is on npm.

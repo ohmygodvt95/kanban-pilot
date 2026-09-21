@@ -16,6 +16,7 @@ import {
   Info,
   Languages,
   LayoutDashboard,
+  LogOut,
   MoreVertical,
   Plug,
   Settings,
@@ -26,6 +27,7 @@ import { type ReactNode, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useProjects } from '../api/queries';
+import { setToken } from '../lib/auth';
 import { useI18n } from '../lib/i18n';
 import { notificationsEnabled, notificationsSupported, setNotificationsEnabled } from '../lib/notify';
 import { Button, IconButton, type MenuItem, MenuRow, Popover } from './ui';
@@ -99,6 +101,12 @@ export function Shell({
   const pkgName = health.data?.package_name ?? 'kanban-pilot';
   const version = health.data?.version ?? null;
   const installCmd = `npm install -g ${pkgName}@latest`;
+  const passwordMode = health.data?.auth_mode === 'password';
+  const signOut = () =>
+    void api.auth.logout().finally(() => {
+      setToken(null);
+      window.location.reload();
+    });
   const copy = (text: string) =>
     void navigator.clipboard?.writeText(text).then(
       () => toast.push({ kind: 'info', text: t('menu.copied', { text }) }),
@@ -140,6 +148,7 @@ export function Shell({
           },
         ]
       : []),
+    ...(passwordMode ? [{ label: t('menu.signOut'), icon: <LogOut />, onClick: signOut }] : []),
     ...(latest
       ? [
           {
