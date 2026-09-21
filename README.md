@@ -1,5 +1,8 @@
 # KanbanPilot
 
+<img width="1918" height="937" alt="image" src="https://github.com/user-attachments/assets/23f0f746-ba37-4431-a179-eaf6b23801f6" />
+
+
 Local-first kanban board that drives coding agents. Create a task, drag the card across
 **Backlog → To do → Doing → Review → Done**, and KanbanPilot runs the coding CLI
 (v1: **Claude Code**; Codex and GitHub Copilot CLI adapters are skeletons) in its own **git worktree**,
