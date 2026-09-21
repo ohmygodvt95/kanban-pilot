@@ -1,6 +1,7 @@
 {
   "name": "@agent-kanban/core",
   "version": "0.1.0",
+  "private": true,
   "description": "Domain core for agent-kanban: state machine, executors, git worktrees, job runner. No HTTP/UI.",
   "type": "module",
   "license": "MIT",

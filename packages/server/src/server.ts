@@ -12,6 +12,8 @@ export interface StartServerOptions {
   /** Try the next ports if `port` is busy. */
   findFreePort?: boolean;
   version?: string;
+  /** npm package name, used for the update check and the install hint in the UI. */
+  packageName?: string;
   token?: string;
 }
 
@@ -41,6 +43,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     logger: opts.logger,
     webDistDir: opts.webDistDir,
     version: opts.version,
+    packageName: opts.packageName,
     token: opts.token,
   });
   const server = await new Promise<ServerType>((resolve, reject) => {

@@ -1,11 +1,17 @@
 {
-  "name": "agent-kanban",
+  "name": "kanban-pilot",
   "version": "0.1.0",
-  "description": "Local-first kanban board that drives coding agents (Claude Code, Codex, Copilot CLI) in git worktrees.",
+  "description": "KanbanPilot: local-first kanban board that drives coding agents (Claude Code, Codex, Copilot CLI) in git worktrees.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ohmygodvt95/kanban-pilot.git"
+  },
+  "homepage": "https://github.com/ohmygodvt95/kanban-pilot#readme",
+  "bugs": "https://github.com/ohmygodvt95/kanban-pilot/issues",
   "bin": {
-    "agent-kanban": "./dist/bin.js"
+    "kanban-pilot": "./dist/bin.js"
   },
   "files": [
     "dist",
@@ -15,10 +21,23 @@
   "engines": {
     "node": ">=22.13"
   },
+  "keywords": [
+    "kanban",
+    "coding-agent",
+    "claude-code",
+    "codex",
+    "copilot",
+    "git-worktree",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsx scripts/build.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "prepublishOnly": "node -e \"for (const f of ['dist/bin.js','dist/web/index.html','templates/CLAUDE.md']) if (!require('fs').existsSync(f)) { console.error('missing ' + f + ': run pnpm build at the repo root first'); process.exit(1) }\""
   },
   "dependencies": {
     "@hono/node-server": "1.19.17",

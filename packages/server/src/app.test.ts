@@ -417,11 +417,21 @@ describe('HTTP API', () => {
   });
 
   it('guards the API with a bearer token when configured and reports it in health', async () => {
-    const guarded = createApp({ core, token: 's3cret', version: '1.2.3', updateCheck: false });
+    const guarded = createApp({
+      core,
+      token: 's3cret',
+      version: '1.2.3',
+      packageName: '@acme/kanban-pilot',
+      updateCheck: false,
+    });
     const health = await json<{ version: string; auth_required: boolean }>(
       await guarded.request('/api/health'),
     );
-    expect(health).toMatchObject({ version: '1.2.3', auth_required: true });
+    expect(health).toMatchObject({
+      version: '1.2.3',
+      package_name: '@acme/kanban-pilot',
+      auth_required: true,
+    });
     expect((await guarded.request('/api/projects')).status).toBe(401);
     expect(
       (await guarded.request('/api/projects', { headers: { authorization: 'Bearer wrong' } })).status,

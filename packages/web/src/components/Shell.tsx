@@ -13,6 +13,7 @@ import {
   BellOff,
   ChevronDown,
   Command,
+  Info,
   Languages,
   LayoutDashboard,
   MoreVertical,
@@ -90,9 +91,19 @@ export function Shell({
   const location = useLocation();
   const notify = useNotificationToggle();
   const { t, lang, setLang } = useI18n();
-  // version pill: the server checks npm once a day; nothing shows while up to date
+  const toast = useToast();
+  // version row (always) + update row: the server checks npm once a day; the install hint uses the package
+  // name the server was built as, so a scoped publish keeps the command right.
   const health = useQuery({ queryKey: ['health'], queryFn: api.health, staleTime: 3_600_000, retry: false });
   const latest = health.data?.latest_version ?? null;
+  const pkgName = health.data?.package_name ?? 'kanban-pilot';
+  const version = health.data?.version ?? null;
+  const installCmd = `npm install -g ${pkgName}@latest`;
+  const copy = (text: string) =>
+    void navigator.clipboard?.writeText(text).then(
+      () => toast.push({ kind: 'info', text: t('menu.copied', { text }) }),
+      () => {},
+    );
   const onSettings = location.pathname.endsWith('/settings') || location.pathname.endsWith('/integration');
   const current = projects.data?.find((p) => p.id === projectId);
   const primary = actions.filter((a) => a.primary);
@@ -119,15 +130,24 @@ export function Shell({
   const general: MenuItem[] = [
     { label: t('menu.language'), icon: <Languages />, onClick: () => setLang(lang === 'vi' ? 'en' : 'vi') },
     ...(onPalette ? [{ label: `${t('menu.palette')} (Ctrl+K)`, icon: <Command />, onClick: onPalette }] : []),
+    ...(version
+      ? [
+          {
+            label: `${pkgName} v${version}`,
+            icon: <Info />,
+            title: t('menu.versionHint'),
+            onClick: () => copy(`${pkgName}@${version}`),
+          },
+        ]
+      : []),
     ...(latest
       ? [
           {
             label: t('menu.updateAvailable', { version: latest }),
             icon: <ArrowUpCircle />,
-            title: t('menu.updateHint'),
+            title: t('menu.updateHint', { cmd: installCmd }),
             active: true,
-            onClick: () =>
-              void navigator.clipboard?.writeText('npm install -g agent-kanban@latest').catch(() => {}),
+            onClick: () => copy(installCmd),
           },
         ]
       : []),
@@ -153,7 +173,7 @@ export function Shell({
         <div className="flex h-12 items-center gap-2 px-3 sm:gap-3">
           <Link to="/" className="flex shrink-0 items-center gap-2 font-semibold text-sm">
             <Logo />
-            <span className="hidden 2xl:inline">Agent Kanban</span>
+            <span className="hidden 2xl:inline">KanbanPilot</span>
           </Link>
           {projectId ? (
             <>

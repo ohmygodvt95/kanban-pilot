@@ -19,7 +19,10 @@ import { startServer } from '@agent-kanban/server';
 import pino from 'pino';
 
 declare const __VERSION__: string;
+declare const __PKG_NAME__: string;
+/** Both are injected by scripts/build.ts from package.json; `tsx src/bin.ts` runs as a dev build. */
 const VERSION: string = typeof __VERSION__ === 'string' ? __VERSION__ : 'dev';
+const PKG_NAME: string = typeof __PKG_NAME__ === 'string' ? __PKG_NAME__ : 'kanban-pilot';
 const here = dirname(fileURLToPath(import.meta.url));
 
 interface Args {
@@ -135,12 +138,13 @@ async function start(args: Args) {
     webDistDir: web,
     findFreePort: true,
     version: VERSION,
+    packageName: PKG_NAME,
     token: token ?? undefined,
   });
   if (server.port !== args.port) logger.info(`port ${args.port} was busy, using ${server.port}`);
   // The UI reads ?token= once, stores it and strips it from the address bar.
   const url = token ? `${server.url}/?token=${token}` : server.url;
-  logger.info(`agent-kanban ${VERSION} listening at ${url}  (db: ${defaultPaths().dbPath})`);
+  logger.info(`kanban-pilot ${VERSION} listening at ${url}  (db: ${defaultPaths().dbPath})`);
   if (args.open) openBrowser(url);
   let stopping = false;
   const shutdown = async (signal: string) => {
@@ -182,7 +186,7 @@ async function add(args: Args) {
       try {
         const project = await core.projects.create({ repo_path: path, accept_repo_scripts: accept });
         console.log(`added project "${project.name}" (${project.repo_path}) id=${project.id}`);
-        console.log(`open it with: npx agent-kanban   → /p/${project.id}`);
+        console.log(`open it with: npx kanban-pilot   → /p/${project.id}`);
         return;
       } catch (err) {
         // The repo's .agent-kanban.json defines scripts: show them before running anything.
@@ -293,17 +297,17 @@ async function doctor(args: Args) {
 }
 
 function help() {
-  console.log(`agent-kanban ${VERSION} — kanban board that drives coding agents in git worktrees
+  console.log(`kanban-pilot ${VERSION} — kanban board that drives coding agents in git worktrees
 
 Usage:
-  agent-kanban [start] [--port 3737] [--no-open] [--host 127.0.0.1]   start the server and open the UI
+  kanban-pilot [start] [--port 3737] [--no-open] [--host 127.0.0.1]   start the server and open the UI
       --token T              require this API token (generated automatically when --host is not loopback)
       --kill-agents          terminate running agents on exit (default: they keep running and are re-attached)
       --retention-days N     delete event streams of DONE runs older than N days (default 30, 0 = never)
-  agent-kanban add [path] [--accept-scripts|-y]                      register a git repo as a project (default: .)
-  agent-kanban doctor [--json]                                       check node, git, sqlite, executor CLIs, GitHub token
+  kanban-pilot add [path] [--accept-scripts|-y]                      register a git repo as a project (default: .)
+  kanban-pilot doctor [--json]                                       check node, git, sqlite, executor CLIs, GitHub token
       --json                 print the checks as a JSON array of { name, ok, detail } instead of text lines
-  agent-kanban --version | --help
+  kanban-pilot --version | --help
 
 Environment: GITHUB_TOKEN / GH_TOKEN, GITLAB_TOKEN (issue import, status sync, PR/MR), ANTHROPIC_* / CLAUDE_CODE_* (forwarded to Claude Code),
              XDG_CONFIG_HOME / XDG_CACHE_HOME (db, worktrees and logs location), LOG_LEVEL, PORT, AK_TOKEN.

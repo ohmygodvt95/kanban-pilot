@@ -18,7 +18,7 @@ test.describe
       await page.goto('/');
       await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
       // first visit: the welcome tour shows and can be skipped
-      const tour = page.getByRole('dialog', { name: 'Welcome to Agent Kanban' });
+      const tour = page.getByRole('dialog', { name: 'Welcome to KanbanPilot' });
       await expect(tour).toBeVisible();
       await tour.getByRole('button', { name: 'Skip' }).click();
       await expect(tour).toBeHidden();
@@ -29,10 +29,14 @@ test.describe
       await page.getByRole('button', { name: 'Open board' }).click();
       await expect(page.getByRole('heading', { name: 'Backlog' })).toBeVisible();
       // the board tour walks through every step, then never comes back
-      await expect(page.getByRole('dialog', { name: 'Welcome to Agent Kanban' })).toBeVisible();
+      await expect(page.getByRole('dialog', { name: 'Welcome to KanbanPilot' })).toBeVisible();
       for (let i = 0; i < 9; i++) await page.getByRole('button', { name: 'Next' }).click();
       await page.getByRole('button', { name: 'Done', exact: true }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
+      // the overflow menu always shows the running version (from /api/health)
+      await page.getByRole('button', { name: 'More' }).click();
+      await expect(page.getByRole('button', { name: /^kanban-pilot v(dev|\d+\.\d+\.\d+)$/ })).toBeVisible();
+      await page.keyboard.press('Escape');
 
       // new task via the keyboard shortcut
       await page.locator('main').click({ position: { x: 5, y: 5 } });

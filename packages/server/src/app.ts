@@ -18,6 +18,8 @@ export interface AppOptions {
   requestLogging?: boolean;
   /** Running version, reported by /api/health and compared with npm. */
   version?: string;
+  /** npm package name (default kanban-pilot): update lookup target and install hint for the UI. */
+  packageName?: string;
   /** When set, every /api route (except health) requires this bearer token. */
   token?: string;
   /** Disable the daily npm version lookup (tests, air-gapped setups). */
@@ -37,13 +39,15 @@ export function createApp(opts: AppOptions): Hono {
   const api = new Hono();
   if (opts.token) api.use('*', requireToken(opts.token));
   const version = opts.version ?? 'dev';
-  const updates = opts.updateCheck === false ? null : new UpdateCheck(version);
+  const packageName = opts.packageName ?? 'kanban-pilot';
+  const updates = opts.updateCheck === false ? null : new UpdateCheck(version, packageName);
   api.get('/health', (c) =>
     c.json({
       ok: true,
       pid: process.pid,
       activeRuns: opts.core.runner.activeRunIds,
       version,
+      package_name: packageName,
       latest_version: updates?.latest() ?? null,
       auth_required: !!opts.token,
     }),

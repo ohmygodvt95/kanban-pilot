@@ -1,16 +1,16 @@
-# agent-kanban
+# KanbanPilot
 
 Local-first kanban board that drives coding agents. Create a task, drag the card across
-**Backlog → To do → Doing → Review → Done**, and agent-kanban runs the coding CLI
+**Backlog → To do → Doing → Review → Done**, and KanbanPilot runs the coding CLI
 (v1: **Claude Code**; Codex and GitHub Copilot CLI adapters are skeletons) in its own **git worktree**,
 streams the agent's log to the UI, commits the result, runs your tests, and moves the card to Review.
 Leave feedback on the diff and send the card back: the agent resumes the same session and fixes it.
 
 ```
-npx agent-kanban            # start on http://127.0.0.1:3737 (next free port) and open the browser
-npx agent-kanban add .      # register the current git repo as a project
-npx agent-kanban doctor     # check node, git, node:sqlite and the executor CLIs (--json for machine-readable output)
-npx agent-kanban --port 4000 --no-open
+npx kanban-pilot            # start on http://127.0.0.1:3737 (next free port) and open the browser
+npx kanban-pilot add .      # register the current git repo as a project
+npx kanban-pilot doctor     # check node, git, node:sqlite and the executor CLIs (--json for machine-readable output)
+npx kanban-pilot --port 4000 --no-open
 ```
 
 Requirements: Node ≥ 22.13 (built-in `node:sqlite`, no native build), git, and a logged-in `claude` CLI.
@@ -53,7 +53,7 @@ the main working tree of your repo is never touched by an agent.
   is retried once automatically with a fresh session and enough context (description, diff, feedback).
 - **Model & budget.** Per project (and per task) `model`; `max_budget_usd` caps each run (Claude `--max-budget-usd`).
 - **Script confirmation.** Scripts from a repo's `.agent-kanban.json` are shown and must be accepted before the
-  project is created (`agent-kanban add --accept-scripts` for automation).
+  project is created (`kanban-pilot add --accept-scripts` for automation).
 - **Update from base.** Merge the base branch into an attempt from Review; conflicts are handed to the agent as a
   followup and the merge is committed by the system.
 - **Queued chat.** Messages typed while the agent works are delivered as feedback right after the run ends.
@@ -133,11 +133,11 @@ pnpm --filter @agent-kanban/core smoke:refine   # real Claude Code: refinement q
 pnpm --filter @agent-kanban/web e2e             # Playwright against a real server + fake agent (chromium)
 pnpm --filter @agent-kanban/server dev      # API on :3737   (AK_FAKE=1 uses the fake agent, no API cost)
 pnpm --filter @agent-kanban/web dev         # Vite on :5173, proxies /api
-cd packages/cli && npm pack                 # tarball you can `npx ./agent-kanban-x.y.z.tgz`
+cd packages/cli && npm pack                 # tarball you can `npx ./kanban-pilot-x.y.z.tgz`
 ```
 
 Packages: `shared` (zod schemas/types), `core` (domain, publishable as `@agent-kanban/core`), `server` (Hono API + SSE),
-`web` (React), `cli` (published as `agent-kanban`, bundles everything). See [ARCHITECTURE.md](ARCHITECTURE.md) and
+`web` (React), `cli` (published on npm as `kanban-pilot`, bundles everything). See [ARCHITECTURE.md](ARCHITECTURE.md) and
 [docs/executor-notes.md](docs/executor-notes.md) for CLI flag/format findings.
 
 ## Non-goals (v1)

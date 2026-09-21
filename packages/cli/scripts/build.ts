@@ -9,6 +9,7 @@ import { build } from 'esbuild';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+  name: string;
   version: string;
   dependencies: Record<string, string>;
 };
@@ -25,7 +26,7 @@ await build({
   target: 'node22',
   conditions: ['@agent-kanban/source'],
   external: Object.keys(pkg.dependencies),
-  define: { __VERSION__: JSON.stringify(pkg.version) },
+  define: { __VERSION__: JSON.stringify(pkg.version), __PKG_NAME__: JSON.stringify(pkg.name) },
   banner: {
     js: '#!/usr/bin/env node\nimport { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);',
   },

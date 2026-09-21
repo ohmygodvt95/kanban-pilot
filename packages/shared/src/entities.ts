@@ -378,6 +378,8 @@ export const healthSchema = z.object({
   pid: z.number(),
   activeRuns: z.array(z.string()),
   version: z.string(),
+  /** npm package name the server was built as (`npm install -g <package_name>@latest`). */
+  package_name: z.string().optional(),
   /** Newest version on npm, when the daily check succeeded and it is newer. */
   latest_version: nullableString.optional(),
   /** true when the server requires a token (non-loopback bind). */

@@ -1,5 +1,5 @@
 {
-  "name": "agent-kanban-monorepo",
+  "name": "kanban-pilot-monorepo",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.15.1",
@@ -13,7 +13,10 @@
     "lint:fix": "biome check --write .",
     "typecheck": "turbo run typecheck",
     "dev": "turbo run dev --parallel",
-    "db:generate": "pnpm --filter @agent-kanban/core db:generate"
+    "db:generate": "pnpm --filter @agent-kanban/core db:generate",
+    "bump": "node scripts/bump.mjs",
+    "pack:cli": "pnpm build && pnpm --filter agent-kanban pack",
+    "release": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm --filter agent-kanban publish"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

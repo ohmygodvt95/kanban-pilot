@@ -195,7 +195,7 @@ export function ProjectsPage() {
                 Add project
               </Button>
               <p className="text-xs text-zinc-500">
-                Tip: <code className="font-mono">npx agent-kanban add .</code> from inside a repo does the
+                Tip: <code className="font-mono">npx kanban-pilot add .</code> from inside a repo does the
                 same.
               </p>
             </form>
@@ -246,7 +246,7 @@ function BackupCard() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `agent-kanban-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `kanban-pilot-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (err) {

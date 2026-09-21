@@ -40,7 +40,7 @@ type Copy = Record<'en' | 'vi', TourStep[]>;
 const BOARD: Copy = {
   en: [
     {
-      title: 'Welcome to Agent Kanban',
+      title: 'Welcome to KanbanPilot',
       body: 'This board hands coding tasks to AI agents. Every task runs in its own git worktree, so your checkout is never touched. Let us walk through the five columns.',
     },
     {
@@ -91,7 +91,7 @@ const BOARD: Copy = {
   ],
   vi: [
     {
-      title: 'Chào mừng đến Agent Kanban',
+      title: 'Chào mừng đến KanbanPilot',
       body: 'Bảng này giao task lập trình cho AI agent. Mỗi task chạy trong một git worktree riêng nên mã đang làm của bạn không bị đụng tới. Cùng đi qua năm cột nhé.',
     },
     {
@@ -145,7 +145,7 @@ const BOARD: Copy = {
 const PROJECTS: Copy = {
   en: [
     {
-      title: 'Welcome to Agent Kanban',
+      title: 'Welcome to KanbanPilot',
       body: 'A local kanban board where AI coding agents (Claude Code, Codex, Copilot) pick up your tasks. Nothing leaves your machine except the agent’s own API calls.',
     },
     {
@@ -156,7 +156,7 @@ const PROJECTS: Copy = {
   ],
   vi: [
     {
-      title: 'Chào mừng đến Agent Kanban',
+      title: 'Chào mừng đến KanbanPilot',
       body: 'Bảng kanban chạy local, nơi các AI agent (Claude Code, Codex, Copilot) nhận task của bạn. Dữ liệu nằm trên máy bạn, chỉ agent gọi API của nó.',
     },
     {

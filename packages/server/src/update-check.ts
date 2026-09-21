@@ -4,7 +4,7 @@
  * The registry document must carry our `agentKanban` marker (set in the CLI's
  * package.json) — the bare name could belong to an unrelated package.
  */
-const REGISTRY = 'https://registry.npmjs.org/agent-kanban/latest';
+const REGISTRY = 'https://registry.npmjs.org';
 const DAY_MS = 24 * 3_600_000;
 
 export class UpdateCheck {
@@ -12,10 +12,15 @@ export class UpdateCheck {
   private checkedAt = 0;
   private inflight: Promise<void> | null = null;
 
+  readonly url: string;
+
   constructor(
     private readonly current: string,
+    packageName = 'kanban-pilot',
     private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.url = registryUrl(packageName);
+  }
 
   /** Newest version when it is newer than the running one; triggers a refresh in the background. */
   latest(): string | null {
@@ -30,7 +35,7 @@ export class UpdateCheck {
   async refresh(): Promise<void> {
     this.checkedAt = Date.now();
     try {
-      const res = await this.fetchImpl(REGISTRY, { signal: AbortSignal.timeout(5_000) });
+      const res = await this.fetchImpl(this.url, { signal: AbortSignal.timeout(5_000) });
       if (!res.ok) return;
       const data = (await res.json()) as { version?: string; agentKanban?: unknown };
       if (typeof data.version === 'string' && data.agentKanban === true) this.latestVersion = data.version;
@@ -38,6 +43,11 @@ export class UpdateCheck {
       /* offline or not published: ignore */
     }
   }
+}
+
+/** `latest` dist-tag document; scoped names keep the `@` and encode the slash (`@scope%2Fname`). */
+export function registryUrl(packageName: string): string {
+  return `${REGISTRY}/${packageName.replace('/', '%2F')}/latest`;
 }
 
 /** semver-ish comparison on the numeric parts only ("1.2.3" > "1.2.0"); unknown formats are never newer. */
